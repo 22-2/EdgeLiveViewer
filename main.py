@@ -445,6 +445,8 @@ class MainWindow(QMainWindow):
 
     def update_thread_list(self, threads):
         # 以前の修正を反映したバージョン
+        # UIの更新を一時停止してパフォーマンスを向上
+        self.thread_table.setUpdatesEnabled(False)
         self.thread_table.setRowCount(0)
         
         for thread in threads:
@@ -460,6 +462,9 @@ class MainWindow(QMainWindow):
             self.thread_table.setItem(row, 3, QTableWidgetItem(thread["date"]))
             
             self.thread_table.item(row, 0).setData(Qt.UserRole, thread["id"])
+        
+        # UIの更新を再開
+        self.thread_table.setUpdatesEnabled(True)
         
         # 自動更新時にはステータスメッセージを上書きしないように配慮
         if not self.refresh_timer.isActive() or not self.auto_refresh_check.isChecked():
@@ -870,6 +875,8 @@ class MainWindow(QMainWindow):
         
         # リアルタイムモードの場合のみ、テーブルに逐次追加
         if not self.is_past_thread:
+            # UIの更新を一時停止してパフォーマンスを向上
+            self.detail_table.setUpdatesEnabled(False)
             current_row_count = self.detail_table.rowCount()
             for comment in comments:
                 name = comment["name"]
@@ -887,6 +894,9 @@ class MainWindow(QMainWindow):
                 self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
                 self.detail_table.setItem(current_row_count, 4, QTableWidgetItem(comment.get("date", "不明")))
                 current_row_count += 1
+            
+            # UIの更新を再開
+            self.detail_table.setUpdatesEnabled(True)
             
             scrollbar = self.detail_table.verticalScrollBar()
             is_at_bottom = scrollbar.value() >= scrollbar.maximum()
@@ -983,6 +993,8 @@ class MainWindow(QMainWindow):
         if not self.is_past_thread:
             return  # 過去ログ以外では何もしない
         
+        # UIの更新を一時停止してパフォーマンスを向上
+        self.detail_table.setUpdatesEnabled(False)
         self.detail_table.setRowCount(0)  # テーブルをクリア
         current_row_count = 0
         
@@ -1002,6 +1014,9 @@ class MainWindow(QMainWindow):
             self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
             self.detail_table.setItem(current_row_count, 4, QTableWidgetItem(comment.get("date", "不明")))
             current_row_count += 1
+        
+        # UIの更新を再開
+        self.detail_table.setUpdatesEnabled(True)
         
         logger.info(f"過去ログの全コメントを表示しました: {len(comments)}件")
         self.statusBar().showMessage(f"過去ログ {self.current_thread_id} の全コメント（{len(comments)}件）を表示しました")

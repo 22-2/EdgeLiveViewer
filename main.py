@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHeaderView, QComboBox, QMessageBox, QInputDialog, 
                              QMenu, QDialog, QTextEdit, QFormLayout, QGroupBox, QDockWidget,
                              QCheckBox, QAction)
-from PyQt5.QtCore import Qt, QTimer, QUrl, QPoint
+from PyQt5.QtCore import Qt, QTimer, QUrl, QPoint, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QDesktopServices
 
 from thread_fetcher_improved import ThreadFetcher, CommentFetcher, NextThreadFinder, MainstreamWatcher
@@ -29,6 +29,29 @@ from settings_dialog import SettingsDialog
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('EdgeLiveViewer')
+
+class PostWorker(QThread):
+    """投稿処理を別スレッドで実行するワーカー"""
+    post_finished = pyqtSignal(bool, str)  # (success, response)
+    
+    def __init__(self, main_window, thread_id, name, mail, comment):
+        super().__init__()
+        self.main_window = main_window
+        self.thread_id = thread_id
+        self.name = name
+        self.mail = mail
+        self.comment = comment
+    
+    def run(self):
+        """別スレッドで投稿リクエストを実行"""
+        try:
+            success, response = self.main_window.send_post_request(
+                self.thread_id, self.name, self.mail, self.comment
+            )
+            self.post_finished.emit(success, response)
+        except Exception as e:
+            logger.error(f"投稿ワーカーでエラー: {str(e)}")
+            self.post_finished.emit(False, str(e))
 
 class WriteWidget(QWidget):
     def __init__(self, parent=None):
@@ -317,6 +340,10 @@ class MainWindow(QMainWindow):
         self.my_comments = {}  
         self.current_thread_id = None
         self.detail_table.doubleClicked.connect(self.start_playback_from_comment)
+        
+        # 投稿ワーカー関連
+        self.post_worker = None
+        self.post_worker_pending_data = None  # 投稿中のデータを保持
 
         # --- 追加: タイマーの設定と開始 ---
         self.refresh_timer.timeout.connect(self.refresh_thread_list)
@@ -804,13 +831,19 @@ class MainWindow(QMainWindow):
             return False, str(e)
 
     def post_comment(self):
-        """コメントをエッジに投稿する"""
+        """コメントをエッヂに投稿する（別スレッドで実行）"""
         if not self.current_thread_id:
             QMessageBox.warning(self, "エラー", "スレッドに接続してください。")
             return
         
         if self.is_past_thread:
             QMessageBox.critical(self, "書き込みエラー", "過去ログには書き込みできません。")
+            return
+        
+        # 投稿中の場合は処理をスキップ
+        if self.post_worker and self.post_worker.isRunning():
+            self.statusBar().showMessage("投稿処理中です。お待ちください...")
+            logger.warning("投稿処理中のため、新しい投稿をスキップしました")
             return
         
         name = self.write_widget.name_input.text().strip() or "エッヂの名無し"
@@ -826,8 +859,35 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "投稿制限", f"5秒以内の連続投稿はできません。あと {remaining:.1f}秒 お待ちください。")
             return
         
-        # 認証トークンがなくてもリクエストを送信し、サーバーからの応答を処理
-        success, response = self.send_post_request(self.current_thread_id, name, mail, comment)
+        # 投稿データを保存
+        self.post_worker_pending_data = {
+            "name": name,
+            "mail": mail,
+            "comment": comment,
+            "time": current_time
+        }
+        
+        # 投稿ワーカーを別スレッドで開始
+        self.post_worker = PostWorker(self, self.current_thread_id, name, mail, comment)
+        self.post_worker.post_finished.connect(self.on_post_finished)
+        self.post_worker.start()
+        
+        # UIフィードバック
+        self.statusBar().showMessage("投稿中...")
+        self.write_widget.post_button.setEnabled(False)
+        logger.info(f"投稿処理を開始しました: コメント='{comment[:30]}...'")
+    
+    def on_post_finished(self, success, response):
+        """投稿処理完了時のコールバック"""
+        # ボタンを再有効化
+        self.write_widget.post_button.setEnabled(True)
+        
+        if not self.post_worker_pending_data:
+            logger.error("投稿データが見つかりません")
+            return
+        
+        comment = self.post_worker_pending_data["comment"]
+        current_time = self.post_worker_pending_data["time"]
         
         if success:
             self.last_post_time = time.time()
@@ -845,7 +905,12 @@ class MainWindow(QMainWindow):
                 # サーバーから返された6桁の認証コードをダイアログに渡す
                 self.show_auth_dialog(response)
             else:
+                name = self.post_worker_pending_data["name"]
+                mail = self.post_worker_pending_data["mail"]
                 self.handle_post_error(response, name, mail, comment)
+        
+        # データをクリア
+        self.post_worker_pending_data = None
 
     def show_auth_dialog(self, auth_code):
         """カスタム認証ダイアログを表示"""

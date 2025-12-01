@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTabWidget, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QComboBox, QMessageBox, QInputDialog, 
                              QMenu, QDialog, QTextEdit, QFormLayout, QGroupBox, QDockWidget,
-                             QCheckBox)
+                             QCheckBox, QAction)
 from PyQt5.QtCore import Qt, QTimer, QUrl, QPoint
 from PyQt5.QtGui import QFont, QColor, QDesktopServices
 
@@ -445,6 +445,8 @@ class MainWindow(QMainWindow):
 
     def update_thread_list(self, threads):
         # 以前の修正を反映したバージョン
+        # UIの更新を一時停止してパフォーマンスを向上
+        self.thread_table.setUpdatesEnabled(False)
         self.thread_table.setRowCount(0)
         
         for thread in threads:
@@ -460,6 +462,9 @@ class MainWindow(QMainWindow):
             self.thread_table.setItem(row, 3, QTableWidgetItem(thread["date"]))
             
             self.thread_table.item(row, 0).setData(Qt.UserRole, thread["id"])
+        
+        # UIの更新を再開
+        self.thread_table.setUpdatesEnabled(True)
         
         # 自動更新時にはステータスメッセージを上書きしないように配慮
         if not self.refresh_timer.isActive() or not self.auto_refresh_check.isChecked():
@@ -603,14 +608,34 @@ class MainWindow(QMainWindow):
         
         menu = QMenu(self)
         
-        ng_id = self.detail_table.item(row, 3).text()
+        # 行データを取得
+        comment_number = self.detail_table.item(row, 0).text()
         ng_text = self.detail_table.item(row, 1).text().strip()
         ng_name = self.detail_table.item(row, 2).text()
+        ng_id = self.detail_table.item(row, 3).text()
+        post_time = self.detail_table.item(row, 4).text()
+        
+        # コピー用のサブメニュー
+        copy_menu = menu.addMenu("クリップボードにコピー")
+        copy_text_action = copy_menu.addAction("本文をコピー")
+        copy_name_action = copy_menu.addAction("名前をコピー")
+        copy_id_action = copy_menu.addAction("IDをコピー")
+        copy_all_action = copy_menu.addAction("すべてをコピー")
+        
+        menu.addSeparator()
         
         add_id_action = menu.addAction("NG IDに追加する")
         add_comment_action = menu.addAction("NG 本文に追加する")
         add_name_action = menu.addAction("NG 名前を追加する")
         open_settings_action = menu.addAction("NG設定")
+        
+        # コピーアクションの接続
+        copy_text_action.triggered.connect(lambda: self.copy_to_clipboard(ng_text))
+        copy_name_action.triggered.connect(lambda: self.copy_to_clipboard(ng_name))
+        copy_id_action.triggered.connect(lambda: self.copy_to_clipboard(ng_id))
+        copy_all_action.triggered.connect(lambda: self.copy_to_clipboard(
+            f"番号: {comment_number}\n本文: {ng_text}\n名前: {ng_name}\nID: {ng_id}\n投稿日時: {post_time}"
+        ))
         
         add_id_action.triggered.connect(lambda: self.add_ng_id(ng_id))
         add_comment_action.triggered.connect(lambda: self.add_ng_comment(ng_text))
@@ -618,6 +643,13 @@ class MainWindow(QMainWindow):
         open_settings_action.triggered.connect(self.open_ng_settings)
         
         menu.exec_(self.detail_table.mapToGlobal(pos))
+    
+    def copy_to_clipboard(self, text):
+        """テキストをクリップボードにコピー"""
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+        logger.info(f"クリップボードにコピー: {text[:50]}..." if len(text) > 50 else f"クリップボードにコピー: {text}")
+        self.statusBar().showMessage("クリップボードにコピーしました")
     
     def add_ng_id(self, ng_id):
         if ng_id and ng_id not in self.settings["ng_ids"]:
@@ -870,6 +902,8 @@ class MainWindow(QMainWindow):
         
         # リアルタイムモードの場合のみ、テーブルに逐次追加
         if not self.is_past_thread:
+            # UIの更新を一時停止してパフォーマンスを向上
+            self.detail_table.setUpdatesEnabled(False)
             current_row_count = self.detail_table.rowCount()
             for comment in comments:
                 name = comment["name"]
@@ -887,6 +921,9 @@ class MainWindow(QMainWindow):
                 self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
                 self.detail_table.setItem(current_row_count, 4, QTableWidgetItem(comment.get("date", "不明")))
                 current_row_count += 1
+            
+            # UIの更新を再開
+            self.detail_table.setUpdatesEnabled(True)
             
             scrollbar = self.detail_table.verticalScrollBar()
             is_at_bottom = scrollbar.value() >= scrollbar.maximum()
@@ -983,6 +1020,8 @@ class MainWindow(QMainWindow):
         if not self.is_past_thread:
             return  # 過去ログ以外では何もしない
         
+        # UIの更新を一時停止してパフォーマンスを向上
+        self.detail_table.setUpdatesEnabled(False)
         self.detail_table.setRowCount(0)  # テーブルをクリア
         current_row_count = 0
         
@@ -1002,6 +1041,9 @@ class MainWindow(QMainWindow):
             self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
             self.detail_table.setItem(current_row_count, 4, QTableWidgetItem(comment.get("date", "不明")))
             current_row_count += 1
+        
+        # UIの更新を再開
+        self.detail_table.setUpdatesEnabled(True)
         
         logger.info(f"過去ログの全コメントを表示しました: {len(comments)}件")
         self.statusBar().showMessage(f"過去ログ {self.current_thread_id} の全コメント（{len(comments)}件）を表示しました")

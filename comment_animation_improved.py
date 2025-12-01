@@ -333,7 +333,27 @@ class CommentOverlayWindow(QWidget):
             logger.debug(f"次のコメントを {interval}ms 後にスケジュール")
 
     def calculate_flow_interval(self):
-        # (このメソッドは変更なし)
+        """コメントのフロー間隔を計算（追いつき機能付き）
+        
+        キューが溜まっている場合は間隔を短縮して追いつく
+        """
+        queue_size = len(self.comment_queue)
+        
+        # キューサイズに応じて間隔を動的に短縮（追いつき機能）
+        if queue_size > 50:
+            # 大幅に遅延: 最速で流す
+            logger.debug(f"追いつきモード(重度): キュー={queue_size}, 間隔=20ms")
+            return 20
+        elif queue_size > 30:
+            # 中程度の遅延: かなり速く
+            logger.debug(f"追いつきモード(中度): キュー={queue_size}, 間隔=50ms")
+            return 50
+        elif queue_size > 15:
+            # 軽度の遅延: やや速く
+            logger.debug(f"追いつきモード(軽度): キュー={queue_size}, 間隔=100ms")
+            return 100
+        
+        # 通常時の処理
         if self.current_batch_size == 0 or self.current_update_interval <= 0:
             return 200
 
@@ -369,14 +389,40 @@ class CommentOverlayWindow(QWidget):
         logger.info(f"flow_timer間隔を調整: {interval}ms (update_interval={self.current_update_interval}s, batch_size={self.current_batch_size})")
 
     def flow_comment(self):
-        # (このメソッドは変更なし)
-        if self.comment_queue:
-            comment = self.comment_queue.pop(0)
-            self.add_comment(comment)
-            logger.debug(f"コメントを流す: text={comment['text']}, 残りキュー={len(self.comment_queue)}")
-            self.schedule_next_comment()
-        else:
+        """次のコメントを流す（追いつき機能付き）
+        
+        キューが溜まっている場合は一度に複数コメントを表示して追いつく
+        """
+        if not self.comment_queue:
             logger.info("キューが空に。次のバッチを待機")
+            return
+        
+        queue_size = len(self.comment_queue)
+        
+        # 遅延量に応じて一度に流すコメント数を決定
+        if queue_size > 50:
+            comments_to_flow = 5  # 一度に5件
+        elif queue_size > 30:
+            comments_to_flow = 3  # 一度に3件
+        elif queue_size > 15:
+            comments_to_flow = 2  # 一度に2件
+        else:
+            comments_to_flow = 1  # 通常は1件
+        
+        # 複数コメントを同時に流す
+        flowed_count = 0
+        for i in range(min(comments_to_flow, len(self.comment_queue))):
+            if self.comment_queue:
+                comment = self.comment_queue.pop(0)
+                self.add_comment(comment)
+                flowed_count += 1
+        
+        if flowed_count > 1:
+            logger.info(f"追いつきモード: {flowed_count}件のコメントを同時に流す, 残りキュー={len(self.comment_queue)}")
+        else:
+            logger.debug(f"コメントを流す: 残りキュー={len(self.comment_queue)}")
+        
+        self.schedule_next_comment()
             
     def add_system_message(self, message, message_type="generic"):
         font = QFont(self.font_family)

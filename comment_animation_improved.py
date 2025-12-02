@@ -629,6 +629,31 @@ class CommentOverlayWindow(QWidget):
                 self.drag_position = event.globalPos()
                 logger.info(f"Resize started: mode={self.resize_mode}")
 
+    def mouseDoubleClickEvent(self, event):
+        """タイトルバー（ハンドル）のダブルクリックで最大化/元に戻す"""
+        if event.button() == Qt.LeftButton:
+            pos = event.pos()
+            # タイトルバー領域内かつ最小化状態でない場合
+            if pos.y() <= self.move_area_height and not self.is_minimized:
+                # ボタン領域を除外
+                button_area_start = self.width() - self.close_button_size - self.maximize_button_size - self.minimize_button_size - self.button_margin * 5
+                if pos.x() < button_area_start:
+                    if self.is_maximized:
+                        # 通常サイズに戻す
+                        if self.normal_geometry:
+                            self.setGeometry(self.normal_geometry)
+                        self.is_maximized = False
+                        logger.info("Window restored to normal size via double-click")
+                    else:
+                        # 最大化する前に現在のジオメトリを保存
+                        self.normal_geometry = self.geometry()
+                        # 利用可能な画面サイズを取得
+                        screen = QApplication.desktop().availableGeometry(self)
+                        self.setGeometry(screen)
+                        self.is_maximized = True
+                        logger.info(f"Window maximized to {screen} via double-click")
+                    self.update()
+
     def mouseMoveEvent(self, event):
         pos = event.pos()
         if self.dragging:

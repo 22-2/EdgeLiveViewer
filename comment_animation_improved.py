@@ -175,6 +175,7 @@ class CommentOverlayWindow(QWidget):
         self.is_hovering_minimize = False
         self.is_hovering_maximize = False
         self.is_minimized = False
+        self.is_maximized = False
         self.normal_geometry = None
 
         self.calculate_comment_rows()
@@ -604,10 +605,20 @@ class CommentOverlayWindow(QWidget):
                 self.update()
             elif maximize_button_rect.contains(pos):
                 logger.info("Maximize button clicked")
-                if self.isMaximized():
-                    self.showNormal()
+                if self.is_maximized:
+                    # 通常サイズに戻す
+                    if self.normal_geometry:
+                        self.setGeometry(self.normal_geometry)
+                    self.is_maximized = False
+                    logger.info("Window restored to normal size")
                 else:
-                    self.showMaximized()
+                    # 最大化する前に現在のジオメトリを保存
+                    self.normal_geometry = self.geometry()
+                    # 利用可能な画面サイズを取得
+                    screen = QApplication.desktop().availableGeometry(self)
+                    self.setGeometry(screen)
+                    self.is_maximized = True
+                    logger.info(f"Window maximized to {screen}")
                 self.update()
             elif pos.y() <= self.move_area_height and self.resize_mode is None:
                 self.dragging = True
@@ -1111,12 +1122,12 @@ class CommentOverlayWindow(QWidget):
             else:
                 painter.setPen(QPen(QColor(230, 230, 230, 150), 2))
             
-            if self.isMaximized():
-                # Draw restore icon
+            if self.is_maximized:
+                # Draw restore icon (2つの重なった四角形)
                 painter.drawRect(maximize_button_x + 8, maximize_button_y + 6, 8, 8)
                 painter.drawRect(maximize_button_x + 6, maximize_button_y + 8, 8, 8)
             else:
-                # Draw maximize icon
+                # Draw maximize icon (単一の四角形)
                 painter.drawRect(maximize_button_x + 6, maximize_button_y + 6, 10, 10)
 
             minimize_button_x = self.width() - self.close_button_size - self.maximize_button_size - self.minimize_button_size - self.button_margin * 5

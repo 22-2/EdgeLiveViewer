@@ -19,8 +19,8 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QTabWidget, QTableWidget, QTableWidgetItem, 
                              QHeaderView, QComboBox, QMessageBox, QInputDialog, 
                              QMenu, QDialog, QTextEdit, QFormLayout, QGroupBox, QDockWidget,
-                             QCheckBox)
-from PyQt5.QtCore import Qt, QTimer, QUrl, QPoint
+                             QCheckBox, QAction)
+from PyQt5.QtCore import Qt, QTimer, QUrl, QPoint, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QDesktopServices
 
 from thread_fetcher_improved import ThreadFetcher, CommentFetcher, NextThreadFinder, MainstreamWatcher
@@ -29,6 +29,29 @@ from settings_dialog import SettingsDialog
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('EdgeLiveViewer')
+
+class PostWorker(QThread):
+    """投稿処理を別スレッドで実行するワーカー"""
+    post_finished = pyqtSignal(bool, str)  # (success, response)
+    
+    def __init__(self, main_window, thread_id, name, mail, comment):
+        super().__init__()
+        self.main_window = main_window
+        self.thread_id = thread_id
+        self.name = name
+        self.mail = mail
+        self.comment = comment
+    
+    def run(self):
+        """別スレッドで投稿リクエストを実行"""
+        try:
+            success, response = self.main_window.send_post_request(
+                self.thread_id, self.name, self.mail, self.comment
+            )
+            self.post_finished.emit(success, response)
+        except Exception as e:
+            logger.error(f"投稿ワーカーでエラー: {str(e)}")
+            self.post_finished.emit(False, str(e))
 
 class WriteWidget(QWidget):
     def __init__(self, parent=None):
@@ -317,6 +340,10 @@ class MainWindow(QMainWindow):
         self.my_comments = {}  
         self.current_thread_id = None
         self.detail_table.doubleClicked.connect(self.start_playback_from_comment)
+        
+        # 投稿ワーカー関連
+        self.post_worker = None
+        self.post_worker_pending_data = None  # 投稿中のデータを保持
 
         # --- 追加: タイマーの設定と開始 ---
         self.refresh_timer.timeout.connect(self.refresh_thread_list)
@@ -445,6 +472,8 @@ class MainWindow(QMainWindow):
 
     def update_thread_list(self, threads):
         # 以前の修正を反映したバージョン
+        # UIの更新を一時停止してパフォーマンスを向上
+        self.thread_table.setUpdatesEnabled(False)
         self.thread_table.setRowCount(0)
         
         for thread in threads:
@@ -460,6 +489,9 @@ class MainWindow(QMainWindow):
             self.thread_table.setItem(row, 3, QTableWidgetItem(thread["date"]))
             
             self.thread_table.item(row, 0).setData(Qt.UserRole, thread["id"])
+        
+        # UIの更新を再開
+        self.thread_table.setUpdatesEnabled(True)
         
         # 自動更新時にはステータスメッセージを上書きしないように配慮
         if not self.refresh_timer.isActive() or not self.auto_refresh_check.isChecked():
@@ -603,14 +635,34 @@ class MainWindow(QMainWindow):
         
         menu = QMenu(self)
         
-        ng_id = self.detail_table.item(row, 3).text()
+        # 行データを取得
+        comment_number = self.detail_table.item(row, 0).text()
         ng_text = self.detail_table.item(row, 1).text().strip()
         ng_name = self.detail_table.item(row, 2).text()
+        ng_id = self.detail_table.item(row, 3).text()
+        post_time = self.detail_table.item(row, 4).text()
+        
+        # コピー用のサブメニュー
+        copy_menu = menu.addMenu("クリップボードにコピー")
+        copy_text_action = copy_menu.addAction("本文をコピー")
+        copy_name_action = copy_menu.addAction("名前をコピー")
+        copy_id_action = copy_menu.addAction("IDをコピー")
+        copy_all_action = copy_menu.addAction("すべてをコピー")
+        
+        menu.addSeparator()
         
         add_id_action = menu.addAction("NG IDに追加する")
         add_comment_action = menu.addAction("NG 本文に追加する")
         add_name_action = menu.addAction("NG 名前を追加する")
         open_settings_action = menu.addAction("NG設定")
+        
+        # コピーアクションの接続
+        copy_text_action.triggered.connect(lambda: self.copy_to_clipboard(ng_text))
+        copy_name_action.triggered.connect(lambda: self.copy_to_clipboard(ng_name))
+        copy_id_action.triggered.connect(lambda: self.copy_to_clipboard(ng_id))
+        copy_all_action.triggered.connect(lambda: self.copy_to_clipboard(
+            f"番号: {comment_number}\n本文: {ng_text}\n名前: {ng_name}\nID: {ng_id}\n投稿日時: {post_time}"
+        ))
         
         add_id_action.triggered.connect(lambda: self.add_ng_id(ng_id))
         add_comment_action.triggered.connect(lambda: self.add_ng_comment(ng_text))
@@ -618,6 +670,13 @@ class MainWindow(QMainWindow):
         open_settings_action.triggered.connect(self.open_ng_settings)
         
         menu.exec_(self.detail_table.mapToGlobal(pos))
+    
+    def copy_to_clipboard(self, text):
+        """テキストをクリップボードにコピー"""
+        clipboard = QApplication.clipboard()
+        clipboard.setText(text)
+        logger.info(f"クリップボードにコピー: {text[:50]}..." if len(text) > 50 else f"クリップボードにコピー: {text}")
+        self.statusBar().showMessage("クリップボードにコピーしました")
     
     def add_ng_id(self, ng_id):
         if ng_id and ng_id not in self.settings["ng_ids"]:
@@ -772,13 +831,19 @@ class MainWindow(QMainWindow):
             return False, str(e)
 
     def post_comment(self):
-        """コメントをエッジに投稿する"""
+        """コメントをエッヂに投稿する（別スレッドで実行）"""
         if not self.current_thread_id:
             QMessageBox.warning(self, "エラー", "スレッドに接続してください。")
             return
         
         if self.is_past_thread:
             QMessageBox.critical(self, "書き込みエラー", "過去ログには書き込みできません。")
+            return
+        
+        # 投稿中の場合は処理をスキップ
+        if self.post_worker and self.post_worker.isRunning():
+            self.statusBar().showMessage("投稿処理中です。お待ちください...")
+            logger.warning("投稿処理中のため、新しい投稿をスキップしました")
             return
         
         name = self.write_widget.name_input.text().strip() or "エッヂの名無し"
@@ -794,8 +859,35 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "投稿制限", f"5秒以内の連続投稿はできません。あと {remaining:.1f}秒 お待ちください。")
             return
         
-        # 認証トークンがなくてもリクエストを送信し、サーバーからの応答を処理
-        success, response = self.send_post_request(self.current_thread_id, name, mail, comment)
+        # 投稿データを保存
+        self.post_worker_pending_data = {
+            "name": name,
+            "mail": mail,
+            "comment": comment,
+            "time": current_time
+        }
+        
+        # 投稿ワーカーを別スレッドで開始
+        self.post_worker = PostWorker(self, self.current_thread_id, name, mail, comment)
+        self.post_worker.post_finished.connect(self.on_post_finished)
+        self.post_worker.start()
+        
+        # UIフィードバック
+        self.statusBar().showMessage("投稿中...")
+        self.write_widget.post_button.setEnabled(False)
+        logger.info(f"投稿処理を開始しました: コメント='{comment[:30]}...'")
+    
+    def on_post_finished(self, success, response):
+        """投稿処理完了時のコールバック"""
+        # ボタンを再有効化
+        self.write_widget.post_button.setEnabled(True)
+        
+        if not self.post_worker_pending_data:
+            logger.error("投稿データが見つかりません")
+            return
+        
+        comment = self.post_worker_pending_data["comment"]
+        current_time = self.post_worker_pending_data["time"]
         
         if success:
             self.last_post_time = time.time()
@@ -813,7 +905,12 @@ class MainWindow(QMainWindow):
                 # サーバーから返された6桁の認証コードをダイアログに渡す
                 self.show_auth_dialog(response)
             else:
+                name = self.post_worker_pending_data["name"]
+                mail = self.post_worker_pending_data["mail"]
                 self.handle_post_error(response, name, mail, comment)
+        
+        # データをクリア
+        self.post_worker_pending_data = None
 
     def show_auth_dialog(self, auth_code):
         """カスタム認証ダイアログを表示"""
@@ -870,6 +967,8 @@ class MainWindow(QMainWindow):
         
         # リアルタイムモードの場合のみ、テーブルに逐次追加
         if not self.is_past_thread:
+            # UIの更新を一時停止してパフォーマンスを向上
+            self.detail_table.setUpdatesEnabled(False)
             current_row_count = self.detail_table.rowCount()
             for comment in comments:
                 name = comment["name"]
@@ -887,6 +986,9 @@ class MainWindow(QMainWindow):
                 self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
                 self.detail_table.setItem(current_row_count, 4, QTableWidgetItem(comment.get("date", "不明")))
                 current_row_count += 1
+            
+            # UIの更新を再開
+            self.detail_table.setUpdatesEnabled(True)
             
             scrollbar = self.detail_table.verticalScrollBar()
             is_at_bottom = scrollbar.value() >= scrollbar.maximum()
@@ -983,6 +1085,8 @@ class MainWindow(QMainWindow):
         if not self.is_past_thread:
             return  # 過去ログ以外では何もしない
         
+        # UIの更新を一時停止してパフォーマンスを向上
+        self.detail_table.setUpdatesEnabled(False)
         self.detail_table.setRowCount(0)  # テーブルをクリア
         current_row_count = 0
         
@@ -1002,6 +1106,9 @@ class MainWindow(QMainWindow):
             self.detail_table.setItem(current_row_count, 3, QTableWidgetItem(comment["id"]))
             self.detail_table.setItem(current_row_count, 4, QTableWidgetItem(comment.get("date", "不明")))
             current_row_count += 1
+        
+        # UIの更新を再開
+        self.detail_table.setUpdatesEnabled(True)
         
         logger.info(f"過去ログの全コメントを表示しました: {len(comments)}件")
         self.statusBar().showMessage(f"過去ログ {self.current_thread_id} の全コメント（{len(comments)}件）を表示しました")

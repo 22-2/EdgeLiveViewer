@@ -175,6 +175,7 @@ class CommentOverlayWindow(QWidget):
         self.is_hovering_minimize = False
         self.is_hovering_maximize = False
         self.is_minimized = False
+        self.is_maximized = False
         self.normal_geometry = None
 
         self.calculate_comment_rows()
@@ -333,7 +334,27 @@ class CommentOverlayWindow(QWidget):
             logger.debug(f"次のコメントを {interval}ms 後にスケジュール")
 
     def calculate_flow_interval(self):
-        # (このメソッドは変更なし)
+        """コメントのフロー間隔を計算（追いつき機能付き）
+        
+        キューが溜まっている場合は間隔を短縮して追いつく
+        """
+        queue_size = len(self.comment_queue)
+        
+        # キューサイズに応じて間隔を動的に短縮（追いつき機能）
+        if queue_size > 50:
+            # 大幅に遅延: 最速で流す
+            logger.debug(f"追いつきモード(重度): キュー={queue_size}, 間隔=20ms")
+            return 20
+        elif queue_size > 30:
+            # 中程度の遅延: かなり速く
+            logger.debug(f"追いつきモード(中度): キュー={queue_size}, 間隔=50ms")
+            return 50
+        elif queue_size > 15:
+            # 軽度の遅延: やや速く
+            logger.debug(f"追いつきモード(軽度): キュー={queue_size}, 間隔=100ms")
+            return 100
+        
+        # 通常時の処理
         if self.current_batch_size == 0 or self.current_update_interval <= 0:
             return 200
 
@@ -369,14 +390,40 @@ class CommentOverlayWindow(QWidget):
         logger.info(f"flow_timer間隔を調整: {interval}ms (update_interval={self.current_update_interval}s, batch_size={self.current_batch_size})")
 
     def flow_comment(self):
-        # (このメソッドは変更なし)
-        if self.comment_queue:
-            comment = self.comment_queue.pop(0)
-            self.add_comment(comment)
-            logger.debug(f"コメントを流す: text={comment['text']}, 残りキュー={len(self.comment_queue)}")
-            self.schedule_next_comment()
-        else:
+        """次のコメントを流す（追いつき機能付き）
+        
+        キューが溜まっている場合は一度に複数コメントを表示して追いつく
+        """
+        if not self.comment_queue:
             logger.info("キューが空に。次のバッチを待機")
+            return
+        
+        queue_size = len(self.comment_queue)
+        
+        # 遅延量に応じて一度に流すコメント数を決定
+        if queue_size > 50:
+            comments_to_flow = 5  # 一度に5件
+        elif queue_size > 30:
+            comments_to_flow = 3  # 一度に3件
+        elif queue_size > 15:
+            comments_to_flow = 2  # 一度に2件
+        else:
+            comments_to_flow = 1  # 通常は1件
+        
+        # 複数コメントを同時に流す
+        flowed_count = 0
+        for i in range(min(comments_to_flow, len(self.comment_queue))):
+            if self.comment_queue:
+                comment = self.comment_queue.pop(0)
+                self.add_comment(comment)
+                flowed_count += 1
+        
+        if flowed_count > 1:
+            logger.info(f"追いつきモード: {flowed_count}件のコメントを同時に流す, 残りキュー={len(self.comment_queue)}")
+        else:
+            logger.debug(f"コメントを流す: 残りキュー={len(self.comment_queue)}")
+        
+        self.schedule_next_comment()
             
     def add_system_message(self, message, message_type="generic"):
         font = QFont(self.font_family)
@@ -558,10 +605,20 @@ class CommentOverlayWindow(QWidget):
                 self.update()
             elif maximize_button_rect.contains(pos):
                 logger.info("Maximize button clicked")
-                if self.isMaximized():
-                    self.showNormal()
+                if self.is_maximized:
+                    # 通常サイズに戻す
+                    if self.normal_geometry:
+                        self.setGeometry(self.normal_geometry)
+                    self.is_maximized = False
+                    logger.info("Window restored to normal size")
                 else:
-                    self.showMaximized()
+                    # 最大化する前に現在のジオメトリを保存
+                    self.normal_geometry = self.geometry()
+                    # 利用可能な画面サイズを取得
+                    screen = QApplication.desktop().availableGeometry(self)
+                    self.setGeometry(screen)
+                    self.is_maximized = True
+                    logger.info(f"Window maximized to {screen}")
                 self.update()
             elif pos.y() <= self.move_area_height and self.resize_mode is None:
                 self.dragging = True
@@ -571,6 +628,31 @@ class CommentOverlayWindow(QWidget):
                 self.resizing = True
                 self.drag_position = event.globalPos()
                 logger.info(f"Resize started: mode={self.resize_mode}")
+
+    def mouseDoubleClickEvent(self, event):
+        """タイトルバー（ハンドル）のダブルクリックで最大化/元に戻す"""
+        if event.button() == Qt.LeftButton:
+            pos = event.pos()
+            # タイトルバー領域内かつ最小化状態でない場合
+            if pos.y() <= self.move_area_height and not self.is_minimized:
+                # ボタン領域を除外
+                button_area_start = self.width() - self.close_button_size - self.maximize_button_size - self.minimize_button_size - self.button_margin * 5
+                if pos.x() < button_area_start:
+                    if self.is_maximized:
+                        # 通常サイズに戻す
+                        if self.normal_geometry:
+                            self.setGeometry(self.normal_geometry)
+                        self.is_maximized = False
+                        logger.info("Window restored to normal size via double-click")
+                    else:
+                        # 最大化する前に現在のジオメトリを保存
+                        self.normal_geometry = self.geometry()
+                        # 利用可能な画面サイズを取得
+                        screen = QApplication.desktop().availableGeometry(self)
+                        self.setGeometry(screen)
+                        self.is_maximized = True
+                        logger.info(f"Window maximized to {screen} via double-click")
+                    self.update()
 
     def mouseMoveEvent(self, event):
         pos = event.pos()
@@ -1065,12 +1147,12 @@ class CommentOverlayWindow(QWidget):
             else:
                 painter.setPen(QPen(QColor(230, 230, 230, 150), 2))
             
-            if self.isMaximized():
-                # Draw restore icon
+            if self.is_maximized:
+                # Draw restore icon (2つの重なった四角形)
                 painter.drawRect(maximize_button_x + 8, maximize_button_y + 6, 8, 8)
                 painter.drawRect(maximize_button_x + 6, maximize_button_y + 8, 8, 8)
             else:
-                # Draw maximize icon
+                # Draw maximize icon (単一の四角形)
                 painter.drawRect(maximize_button_x + 6, maximize_button_y + 6, 10, 10)
 
             minimize_button_x = self.width() - self.close_button_size - self.maximize_button_size - self.minimize_button_size - self.button_margin * 5

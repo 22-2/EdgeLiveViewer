@@ -169,14 +169,14 @@ class CommentOverlayWindow(QWidget):
         self.move_area_height = 25
         self.close_button_size = 22
         self.minimize_button_size = 22
-        self.maximize_button_size = 22
+        self.maximize_button_size = 22  # 最大化ボタンのサイズ
         self.button_margin = 2
         self.is_hovering_close = False
         self.is_hovering_minimize = False
-        self.is_hovering_maximize = False
+        self.is_hovering_maximize = False  # 最大化ボタンのホバー状態
         self.is_minimized = False
-        self.is_maximized = False
-        self.normal_geometry = None
+        self.is_maximized = False  # ウィンドウが最大化されているか
+        self._normal_geometry = None  # 最大化前のジオメトリを保存
 
         self.calculate_comment_rows()
         self.row_usage = {}
@@ -327,7 +327,6 @@ class CommentOverlayWindow(QWidget):
                 self.schedule_next_comment()
 
     def schedule_next_comment(self):
-        # (このメソッドは変更なし)
         if self.comment_queue:
             interval = self.calculate_flow_interval()
             QTimer.singleShot(interval, self.flow_comment)
@@ -390,23 +389,11 @@ class CommentOverlayWindow(QWidget):
         logger.info(f"flow_timer間隔を調整: {interval}ms (update_interval={self.current_update_interval}s, batch_size={self.current_batch_size})")
 
     def flow_comment(self):
-        """次のコメントを流す（追いつき機能付き）
-        
-        キューが溜まっている場合は一度に複数コメントを表示して追いつく
-        """
-        if not self.comment_queue:
-            logger.info("キューが空に。次のバッチを待機")
-            return
-        
-        queue_size = len(self.comment_queue)
-        
-        # 遅延量に応じて一度に流すコメント数を決定
-        if queue_size > 50:
-            comments_to_flow = 5  # 一度に5件
-        elif queue_size > 30:
-            comments_to_flow = 3  # 一度に3件
-        elif queue_size > 15:
-            comments_to_flow = 2  # 一度に2件
+        if self.comment_queue:
+            comment = self.comment_queue.pop(0)
+            self.add_comment(comment)
+            logger.debug(f"コメントを流す: text={comment['text']}, 残りキュー={len(self.comment_queue)}")
+            self.schedule_next_comment()
         else:
             comments_to_flow = 1  # 通常は1件
         
@@ -511,6 +498,7 @@ class CommentOverlayWindow(QWidget):
             self.close_button_size,
             self.close_button_size
         )
+        # 最大化ボタンは閉じるボタンと枠透明化ボタンの間
         maximize_button_rect = QRect(
             self.width() - self.close_button_size - self.maximize_button_size - self.button_margin * 3,
             self.button_margin,
@@ -525,9 +513,13 @@ class CommentOverlayWindow(QWidget):
         )
 
         self.is_hovering_close = close_button_rect.contains(pos)
+        self.is_hovering_maximize = maximize_button_rect.contains(pos)
         self.is_hovering_minimize = minimize_button_rect.contains(pos)
         self.is_hovering_maximize = maximize_button_rect.contains(pos)
         if self.is_hovering_close:
+            self.setCursor(Qt.PointingHandCursor)
+            self.resize_mode = None
+        elif self.is_hovering_maximize:
             self.setCursor(Qt.PointingHandCursor)
             self.resize_mode = None
         elif self.is_hovering_minimize:
@@ -583,6 +575,7 @@ class CommentOverlayWindow(QWidget):
                 self.close_button_size,
                 self.close_button_size
             )
+            # 最大化ボタンは閉じるボタンと枠透明化ボタンの間
             maximize_button_rect = QRect(
                 self.width() - self.close_button_size - self.maximize_button_size - self.button_margin * 3,
                 self.button_margin,
@@ -599,6 +592,8 @@ class CommentOverlayWindow(QWidget):
             if close_button_rect.contains(pos):
                 logger.info("Close button clicked, closing window")
                 self.close()
+            elif maximize_button_rect.contains(pos):
+                self.toggle_maximize()
             elif minimize_button_rect.contains(pos):
                 logger.info("Minimize button clicked, hiding move area and borders")
                 self.is_minimized = True
@@ -628,6 +623,40 @@ class CommentOverlayWindow(QWidget):
                 self.resizing = True
                 self.drag_position = event.globalPos()
                 logger.info(f"Resize started: mode={self.resize_mode}")
+    
+    def toggle_maximize(self):
+        """ウィンドウの最大化/元のサイズへの切り替え"""
+        if self.is_maximized:
+            # 元のサイズに戻す
+            if self._normal_geometry:
+                self.setGeometry(self._normal_geometry)
+                logger.info(f"Restored window to normal size: {self._normal_geometry}")
+            self.is_maximized = False
+        else:
+            # 現在のジオメトリを保存
+            self._normal_geometry = self.geometry()
+            
+            # 現在のモニターでウィンドウを最大化（タスクバーを含む画面全体）
+            from PyQt5.QtWidgets import QDesktopWidget
+            desktop = QDesktopWidget()
+            screen_number = desktop.screenNumber(self)
+            screen_geometry = desktop.screenGeometry(screen_number)  # タスクバーを含む画面全体
+            
+            self.setGeometry(screen_geometry)
+            self.is_maximized = True
+            logger.info(f"Maximized window on screen {screen_number}: {screen_geometry}")
+        
+        # 状態を即時保存
+        app = QApplication.instance()
+        main_window = app.property("main_window")
+        if main_window:
+            main_window.save_window_position(
+                self.pos().x(), self.pos().y(), self.width(), self.height(),
+                is_maximized=self.is_maximized,
+                normal_geometry=self._normal_geometry
+            )
+        
+        self.update()
 
     def mouseDoubleClickEvent(self, event):
         """タイトルバー（ハンドル）のダブルクリックで最大化/元に戻す"""
@@ -685,7 +714,11 @@ class CommentOverlayWindow(QWidget):
         app = QApplication.instance()
         main_window = app.property("main_window")
         if main_window:
-            main_window.save_window_position(self.pos().x(), self.pos().y(), self.width(), self.height())
+            main_window.save_window_position(
+                self.pos().x(), self.pos().y(), self.width(), self.height(),
+                is_maximized=self.is_maximized,
+                normal_geometry=self._normal_geometry
+            )
         event.accept()
 
     def resize_window(self, global_pos):
@@ -1140,21 +1173,15 @@ class CommentOverlayWindow(QWidget):
             painter.drawLine(close_button_x + 6, close_button_y + 6, close_button_x + self.close_button_size - 6, close_button_y + self.close_button_size - 6)
             painter.drawLine(close_button_x + self.close_button_size - 6, close_button_y + 6, close_button_x + 6, close_button_y + self.close_button_size - 6)
 
+            # 最大化ボタン（四角マーク）を閉じるボタンの左側に描画
             maximize_button_x = self.width() - self.close_button_size - self.maximize_button_size - self.button_margin * 3
             maximize_button_y = self.button_margin
-            if self.is_hovering_maximize:
-                painter.setPen(QPen(QColor(230, 230, 230, 200), 2))
-            else:
-                painter.setPen(QPen(QColor(230, 230, 230, 150), 2))
-            
-            if self.is_maximized:
-                # Draw restore icon (2つの重なった四角形)
-                painter.drawRect(maximize_button_x + 8, maximize_button_y + 6, 8, 8)
-                painter.drawRect(maximize_button_x + 6, maximize_button_y + 8, 8, 8)
-            else:
-                # Draw maximize icon (単一の四角形)
-                painter.drawRect(maximize_button_x + 6, maximize_button_y + 6, 10, 10)
+            if self.is_hovering_maximize: painter.setPen(QPen(QColor(230, 230, 230, 200), 2))
+            else: painter.setPen(QPen(QColor(230, 230, 230, 150), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(maximize_button_x + 5, maximize_button_y + 5, self.maximize_button_size - 10, self.maximize_button_size - 10)
 
+            # 枠透明化ボタン（−マーク）を最大化ボタンの左側に描画
             minimize_button_x = self.width() - self.close_button_size - self.maximize_button_size - self.minimize_button_size - self.button_margin * 5
             minimize_button_y = self.button_margin
             if self.is_hovering_minimize: painter.setPen(QPen(QColor(230, 230, 230, 200), 2))

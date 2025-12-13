@@ -389,21 +389,27 @@ class CommentOverlayWindow(QWidget):
         logger.info(f"flow_timer間隔を調整: {interval}ms (update_interval={self.current_update_interval}s, batch_size={self.current_batch_size})")
 
     def flow_comment(self):
-        if self.comment_queue:
+        if not self.comment_queue:
+            return
+
+        queue_size = len(self.comment_queue)
+        comments_to_flow = 1  # 通常は1件
+
+        # 追いつきモード: キューサイズに応じて同時に流す件数を増やす
+        if queue_size > 50:
+            comments_to_flow = 5
+        elif queue_size > 30:
+            comments_to_flow = 4
+        elif queue_size > 20:
+            comments_to_flow = 3
+        elif queue_size > 10:
+            comments_to_flow = 2
+
+        flowed_count = 0
+        for _ in range(min(comments_to_flow, len(self.comment_queue))):
             comment = self.comment_queue.pop(0)
             self.add_comment(comment)
-            logger.debug(f"コメントを流す: text={comment['text']}, 残りキュー={len(self.comment_queue)}")
-            self.schedule_next_comment()
-        else:
-            comments_to_flow = 1  # 通常は1件
-        
-        # 複数コメントを同時に流す
-        flowed_count = 0
-        for i in range(min(comments_to_flow, len(self.comment_queue))):
-            if self.comment_queue:
-                comment = self.comment_queue.pop(0)
-                self.add_comment(comment)
-                flowed_count += 1
+            flowed_count += 1
         
         if flowed_count > 1:
             logger.info(f"追いつきモード: {flowed_count}件のコメントを同時に流す, 残りキュー={len(self.comment_queue)}")

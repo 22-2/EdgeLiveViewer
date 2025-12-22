@@ -425,6 +425,7 @@ class MainWindow(QMainWindow):
         self.last_post_time = 0
         self.my_comments = {}  
         self.current_thread_id = None
+        self.is_thread_finished = False  # 1000レス到達で正常停止した場合はTrue
         self.detail_table.doubleClicked.connect(self.start_playback_from_comment)
         
         # 投稿ワーカー関連
@@ -710,6 +711,11 @@ class MainWindow(QMainWindow):
         event.accept()
     
     def check_fetcher_health(self):
+        # 1000レス到達で正常停止した場合は再起動しない
+        if self.is_thread_finished:
+            logger.debug("check_fetcher_health: スレッドは正常に完了したため、再起動しません")
+            return
+        
         if self.comment_fetcher and not self.comment_fetcher.isRunning():
             logger.warning("CommentFetcher が停止している可能性があります。再起動します")
             self.start_thread_fetcher(self.current_thread_id, self.current_thread_title)
@@ -1221,6 +1227,7 @@ class MainWindow(QMainWindow):
             
             if self.next_thread_finder is not None and self.next_thread_finder.isRunning():
                 self.next_thread_finder.stop()
+                self.next_thread_finder.wait(3000)  # 最大3秒待機
                 logger.info(f"次スレ検索を停止しました（スレッド一覧から選択: {thread_id}）")
                 self.next_thread_finder = None
             
@@ -1272,14 +1279,20 @@ class MainWindow(QMainWindow):
     
     def connect_to_thread_by_id(self, thread_id, thread_title=None):
 
+
+        # 新しいスレッドに接続するため、完走フラグをリセット
+        self.is_thread_finished = False
+        
         # ### 機能追加: 既存のウォッチャーを停止させる処理を追加 ###
         if self.mainstream_watcher and self.mainstream_watcher.isRunning():
             self.mainstream_watcher.stop()
+            self.mainstream_watcher.wait(3000)  # 最大3秒待機
             logger.info("本流スレ監視を停止しました（新しいスレッド接続）")
             self.mainstream_watcher = None
         
         if self.next_thread_finder is not None and self.next_thread_finder.isRunning():
             self.next_thread_finder.stop()
+            self.next_thread_finder.wait(3000)  # 最大3秒待機
             logger.info(f"次スレ検索を停止しました（新しいスレッド接続: {thread_id}）")
             self.next_thread_finder = None
         
@@ -1387,12 +1400,16 @@ class MainWindow(QMainWindow):
     def handle_thread_filled(self, thread_id, thread_title):
         logger.info(f"スレッド {thread_id} が埋まりました。")
         
+        # 1000レス到達を記録（再起動を防止）
+        self.is_thread_finished = True
+        
         if self.settings.get("auto_next_thread", True):
             logger.info("次スレを検索します")
             search_duration = self.settings.get("next_thread_search_duration", 180)
             
             if self.next_thread_finder is not None:
                 self.next_thread_finder.stop()
+                self.next_thread_finder.wait(3000)  # 最大3秒待機
             
             self.next_thread_finder = NextThreadFinder(thread_id, thread_title, search_duration)
             self.next_thread_finder.next_thread_found.connect(self.on_next_thread_found)
@@ -1428,6 +1445,7 @@ class MainWindow(QMainWindow):
             
             if self.mainstream_watcher and self.mainstream_watcher.isRunning():
                 self.mainstream_watcher.stop()
+                self.mainstream_watcher.wait(3000)  # 最大3秒待機
 
             self.mainstream_watcher = MainstreamWatcher(
                 original_title=original_title_for_watcher,

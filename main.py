@@ -13,6 +13,7 @@ import json
 import re
 import requests
 import logging
+import traceback
 import zstandard as zstd
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QLabel, QPushButton, QLineEdit, 
@@ -27,8 +28,40 @@ from thread_fetcher_improved import ThreadFetcher, CommentFetcher, NextThreadFin
 from comment_animation_improved import CommentOverlayWindow
 from settings_dialog import SettingsDialog
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# ログ設定: ~/.edge_live_viewer/app.log に保存
+LOG_DIR = os.path.expanduser("~/.edge_live_viewer")
+os.makedirs(LOG_DIR, exist_ok=True)
+LOG_FILE = os.path.join(LOG_DIR, "app.log")
+
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE, encoding='utf-8'),
+        logging.StreamHandler()
+    ]
+)
 logger = logging.getLogger('EdgeLiveViewer')
+
+def exception_hook(exctype, value, tb):
+    """未捕捉の例外をログに記録し、致命的なエラーをユーザーに通知する"""
+    error_msg = "".join(traceback.format_exception(exctype, value, tb))
+    logger.critical("未捕捉の例外が発生しました:\n%s", error_msg)
+    
+    # GUIが表示可能ならエラーダイアログを表示
+    try:
+        app = QApplication.instance()
+        if app:
+            QMessageBox.critical(None, "致命的なエラー", 
+                                f"予期しないエラーが発生しました。アプリケーションを終了します。\n\n"
+                                f"エラー内容: {value}\n\n"
+                                f"詳細はログファイルをご確認ください:\n{LOG_FILE}")
+    except:
+        pass
+    
+    sys.__excepthook__(exctype, value, tb)
+
+sys.excepthook = exception_hook
 
 class PostCommentWorker(QThread):
     """コメント投稿を非同期で実行するワーカースレッド"""
@@ -1302,9 +1335,10 @@ class MainWindow(QMainWindow):
                 logger.warning(f"既存の CommentFetcher {self.current_thread_id} が終了していない可能性があります")
         
         if self.overlay_window:
+            # スレ切り替え時は未表示のキューだけクリアし、
+            # 既に画面上を流れているレスは自然に流れ切らせる
             self.overlay_window.comment_queue.clear()
-            if self.overlay_window.flow_timer.isActive():
-                self.overlay_window.flow_timer.stop()
+            self.overlay_window.delayed_comment_queue.clear()
         
         if not self.check_thread_exists(thread_id):
             self.show_error(f"スレッド {thread_id} は存在しません（.dat ファイルが見つかりません）。")
@@ -1357,9 +1391,8 @@ class MainWindow(QMainWindow):
             self.overlay_window.show()
             logger.info(f"コメントオーバーレイウィンドウを開きました: x={overlay_x}, y={overlay_y}, width={overlay_width}, height={overlay_height}, is_maximized={self.overlay_window.is_maximized}")
         else:
-            self.overlay_window.comments.clear()
-            self.overlay_window.row_usage.clear()
-            logger.info("既存のコメントオーバーレイウィンドウを再利用します")
+            # 表示中のコメント（comments, row_usage）は残したまま自然に流れ切らせる
+            logger.info("既存のコメントオーバーレイウィンドウを再利用します（表示中のレスは流れ切るまで継続）")
         
         self.start_thread_fetcher(thread_id, thread_title, is_past_thread=self.is_past_thread)
         self.statusBar().showMessage(f"スレッド {thread_id} - {thread_title} に接続しました")

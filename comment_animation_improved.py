@@ -8,13 +8,14 @@ import time
 import re  # ここを追加
 from PyQt5.QtWidgets import (QWidget, QApplication)
 from PyQt5.QtCore import (Qt, QTimer, QRect, QPoint, QSize, QThread, pyqtSignal, QBuffer, QByteArray)
-from PyQt5.QtGui import (QFont, QColor, QPainter, QFontMetrics, QPen, QBrush, QImage, QMovie, QPixmap)
+from PyQt5.QtGui import (QFont, QColor, QPainter, QFontMetrics, QPen, QBrush, QImage, QMovie, QPixmap, QCursor)
 import requests
 from io import BytesIO
 import threading
 from queue import Queue, Empty
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', force=True)
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger('CommentOverlayWindow')
 
 class CommentObject:
@@ -194,7 +195,16 @@ class CommentOverlayWindow(QWidget):
 
         self.comment_id_counter = 0
         self.setMouseTracking(True)
+        # Hoverイベントを確実に受け取るためにWA_Hoverを有効化する
+        # 意図: 一部環境でenter/leaveが期待通り発火しない場合があるため、
+        #       明示的にホバー属性をセットして安定させる。
+        self.setAttribute(Qt.WA_Hover, True)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        # ホバー状態のフラグ: ウィンドウ内にマウスがいるかを追跡し、
+        # フレーム（枠線／タイトル領域／ボタン）の表示制御に利用する。
+        # 意図: ユーザーが操作していないときはフレームを隠して、
+        # コメント描画を邪魔しないようにする。
+        self.is_hovering_window = False
         self.main_window = None
         self.ng_ids = []
         self.ng_names = []
@@ -497,6 +507,9 @@ class CommentOverlayWindow(QWidget):
         top = pos.y() <= self.resize_border
         bottom = pos.y() >= self.height() - self.resize_border
         in_move_area = pos.y() <= self.move_area_height
+        # トップバー（move_area_height）内にマウスがいるときだけホバー扱いにする
+        # 意図: 枠の「中身」ではホバー扱いにしないため、ここでフラグを更新する
+        self.is_hovering_window = in_move_area
 
         close_button_rect = QRect(
             self.width() - self.close_button_size - self.button_margin,
@@ -711,6 +724,26 @@ class CommentOverlayWindow(QWidget):
             self.dragging = False
             self.resizing = False
             self.update_cursor(event.pos())
+
+    def enterEvent(self, event):
+        # ウィンドウ内にマウスが入った（ホバー開始）ことを検知して
+        # フレーム表示を有効化する。
+        # 意図: マウスがウィンドウ内にあるときだけ枠／ボタンを表示し、
+        # 操作していないときはフレームを隠して視認性を向上させる。
+        # マウスがウィンドウに入った時点で、現在のカーソル位置が
+        # トップバー内かどうかを判定してフラグを設定する。
+        global_pos = QCursor.pos()
+        local_pos = self.mapFromGlobal(global_pos)
+        self.is_hovering_window = local_pos.y() <= self.move_area_height
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        # マウスがウィンドウから離れた（ホバー終了）のでフレーム表示を無効化する。
+        # ウィンドウを離れたら必ずホバーフラグを解除する
+        self.is_hovering_window = False
+        self.update()
+        super().leaveEvent(event)
 
     def closeEvent(self, event):
         for movie in self.movies.values():
@@ -1164,8 +1197,21 @@ class CommentOverlayWindow(QWidget):
         font = QFont(self.font_family, self.font_size, self.font_weight)
         font_metrics = QFontMetrics(font)
 
-        # --- ウィンドウのコントロールUI描画 (変更なし) ---
-        if not self.is_minimized:
+        # --- ウィンドウのコントロールUI描画（ホバー/ドラッグ時のみ） ---
+        # フレーム（タイトル領域・枠線・ボタン）は、ホバー・ドラッグ・リサイズ時のみ表示する
+        # 意図: 常時フレームを表示すると視認性が悪くなるため、操作時だけ表示する
+        show_frame = (not self.is_minimized) and (self.is_hovering_window or self.dragging or self.resizing)
+
+        # フレーム非表示時でもウィンドウ全体にほぼ透過の背景を描画して
+        # OS/Qtのレイヤードウィンドウで「完全透過領域がクリック透過になる」挙動を防ぐ。
+        # 意図: 完全に透明なピクセルだけだとマウス判定が行われない環境があるため、
+        #       見た目上は透明に見える最小アルファを敷いてヒット判定を維持する。
+        if not show_frame:
+            painter.setBrush(QBrush(QColor(0, 0, 0, 1)))
+            painter.setPen(Qt.NoPen)
+            painter.drawRect(0, 0, self.width(), self.height())
+
+        if show_frame:
             # ... (この部分は元のコードのまま) ...
             painter.setBrush(QBrush(QColor(50, 50, 50, 100)))
             painter.setPen(QPen(QColor(255, 255, 255, 50), 1))

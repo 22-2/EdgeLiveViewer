@@ -45,6 +45,10 @@ logger = logging.getLogger('EdgeLiveViewer')
 
 def exception_hook(exctype, value, tb):
     """未捕捉の例外をログに記録し、致命的なエラーをユーザーに通知する"""
+    # KeyboardInterrupt (Ctrl+C) は正常終了扱いとし、エラーダイアログを出さない
+    if issubclass(exctype, KeyboardInterrupt):
+        sys.__excepthook__(exctype, value, tb)
+        return
     error_msg = "".join(traceback.format_exception(exctype, value, tb))
     logger.critical("未捕捉の例外が発生しました:\n%s", error_msg)
     

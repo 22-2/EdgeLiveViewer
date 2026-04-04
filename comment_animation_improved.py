@@ -133,7 +133,9 @@ class CommentOverlayWindow(QWidget):
             "hide_anchor_comments": False,
             "hide_url_comments": False,
             "display_images": True,
-            "hide_image_urls": True
+            "hide_image_urls": True,
+            "opaque_background_mode": False,
+            "chroma_key_color": "#00FF00"
         }
 
         self.comments = []
@@ -147,6 +149,8 @@ class CommentOverlayWindow(QWidget):
         self.font_shadow_color = QColor("#000000")
         self.comment_speed = 6.0
         self.display_position = "top"
+        self.opaque_background_mode = False
+        self.chroma_key_color = QColor("#00FF00")
         self.hide_anchor_comments = False
         self.hide_url_comments = False
         self.spacing = 30
@@ -1160,9 +1164,13 @@ class CommentOverlayWindow(QWidget):
         self.current_update_interval = self.settings.get("update_interval", 1.0)
 
         self.comment_delay = self.settings.get("comment_delay", 0)
+        self.opaque_background_mode = self.settings.get("opaque_background_mode", False)
+        self.chroma_key_color = QColor(self.settings.get("chroma_key_color", "#00FF00"))
         
         opacity = self.settings.get("window_opacity", 0.8)
-        self.setWindowOpacity(opacity)
+        # 意図: クロマキー向け単色背景では半透明合成を避け、色抜きしやすい不透明表示に固定する。
+        self.setWindowOpacity(1.0 if self.opaque_background_mode else opacity)
+        self.setAttribute(Qt.WA_TranslucentBackground, not self.opaque_background_mode)
         
         self.calculate_comment_rows()
         for comment in self.comments:
@@ -1193,6 +1201,12 @@ class CommentOverlayWindow(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
+        # 意図: OBSのクロマキー抜き向けに、背景を単色で全面塗りするモードを提供する。
+        if self.opaque_background_mode:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QBrush(self.chroma_key_color))
+            painter.drawRect(self.rect())
+
         # フォントメトリクスは枠線描画用に一度だけ取得
         font = QFont(self.font_family, self.font_size, self.font_weight)
         font_metrics = QFontMetrics(font)
@@ -1206,7 +1220,10 @@ class CommentOverlayWindow(QWidget):
         # 意図: 全画面に当たり判定を持たせると中身がクリックを奪うため、
         #       ホバー/ドラッグを受ける領域を上部バーだけに限定する。
         if not show_frame:
-            painter.setBrush(QBrush(QColor(0, 0, 0, 1)))
+            if self.opaque_background_mode:
+                painter.setBrush(QBrush(self.chroma_key_color))
+            else:
+                painter.setBrush(QBrush(QColor(0, 0, 0, 1)))
             painter.setPen(Qt.NoPen)
             painter.drawRect(0, 0, self.width(), self.move_area_height)
 

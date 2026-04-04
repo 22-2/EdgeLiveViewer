@@ -46,6 +46,8 @@ class SettingsDialog(QDialog):
             "write_window_opacity": 1.0,
             "hide_name_mail_on_detach": False,
             "hide_image_urls": True,  # 新しい設定項目（デフォルトで非表示）
+            "opaque_background_mode": False,
+            "chroma_key_color": "#00FF00",
             # ### 機能追加: 本流スレ監視設定のデフォルト値を追加 ###
             "watch_mainstream_thread": True,
             "watch_duration": 60,
@@ -209,6 +211,17 @@ class SettingsDialog(QDialog):
         display_form.addRow("ウィンドウ透明度:", self.window_opacity_slider)
         display_form.addRow("", self.window_opacity_label)
 
+        self.opaque_background_checkbox = QCheckBox("透過なしモード（単色背景・OBSクロマキー向け）")
+        self.opaque_background_checkbox.setChecked(self.settings.get("opaque_background_mode", False))
+        self.opaque_background_checkbox.stateChanged.connect(self.update_opaque_background_ui)
+        display_form.addRow("", self.opaque_background_checkbox)
+
+        self.chroma_key_color_button = QPushButton()
+        self.chroma_key_color_button.setAutoFillBackground(True)
+        self.update_chroma_key_color_button(self.settings.get("chroma_key_color", "#00FF00"))
+        self.chroma_key_color_button.clicked.connect(self.select_chroma_key_color)
+        display_form.addRow("背景色（クロマキー）:", self.chroma_key_color_button)
+
         # 分離ウィンドウ透明度のスライダー追加
         self.write_window_opacity_slider = QSlider(Qt.Horizontal)
         self.write_window_opacity_slider.setRange(10, 100)  # 10%～100%
@@ -237,6 +250,8 @@ class SettingsDialog(QDialog):
         self.hide_image_urls_checkbox = QCheckBox("画像URL箇所を非表示にし先頭に[📷]を追加する")
         self.hide_image_urls_checkbox.setChecked(self.settings.get("hide_image_urls", True))
         display_form.addRow("", self.hide_image_urls_checkbox)
+
+        self.update_opaque_background_ui()
 
         display_group.setLayout(display_form)
         display_layout.addWidget(display_group)
@@ -514,6 +529,23 @@ class SettingsDialog(QDialog):
     def update_write_window_opacity_label(self, value):
         self.write_window_opacity_label.setText(f"{value}%")
 
+    def select_chroma_key_color(self):
+        current_color = QColor(self.settings.get("chroma_key_color", "#00FF00"))
+        color = QColorDialog.getColor(current_color, self, "背景色（クロマキー）を選択")
+        if color.isValid():
+            self.update_chroma_key_color_button(color.name())
+
+    def update_chroma_key_color_button(self, color_name):
+        self.settings["chroma_key_color"] = color_name
+        self.chroma_key_color_button.setStyleSheet(
+            f"background-color: {color_name}; color: {'#000000' if QColor(color_name).lightness() > 128 else '#FFFFFF'};"
+        )
+        self.chroma_key_color_button.setText(color_name)
+
+    def update_opaque_background_ui(self):
+        enabled = self.opaque_background_checkbox.isChecked()
+        self.chroma_key_color_button.setEnabled(enabled)
+
     def get_settings(self):
         return self.settings
     
@@ -540,6 +572,8 @@ class SettingsDialog(QDialog):
         self.settings["write_window_opacity"] = self.write_window_opacity_slider.value() / 100.0
         self.settings["display_images"] = self.display_images_checkbox.isChecked()  # 確実に保存
         self.settings["hide_image_urls"] = self.hide_image_urls_checkbox.isChecked()  # 新しい設定を保存
+        self.settings["opaque_background_mode"] = self.opaque_background_checkbox.isChecked()
+        self.settings["chroma_key_color"] = self.chroma_key_color_button.text()
 
         # ### 機能追加: 本流スレ監視設定を保存 ###
         self.settings["watch_mainstream_thread"] = self.watch_mainstream_check.isChecked()
@@ -592,6 +626,7 @@ class SettingsDialog(QDialog):
                 "playback_speed": 1.0, "auto_next_thread": True, "next_thread_search_duration": 180,
                 "hide_anchor_comments": False, "hide_url_comments": False, "spacing": 30,
                 "ng_ids": [], "ng_names": [], "ng_texts": [], "display_images": True,
+                "opaque_background_mode": False, "chroma_key_color": "#00FF00",
                 # ### 機能追加: 本流スレ監視設定をリセット ###
                 "watch_mainstream_thread": True, "watch_duration": 60, "watch_delay": 15, "momentum_ratio": 1.5
             }
@@ -629,6 +664,9 @@ class SettingsDialog(QDialog):
             self.ng_name_list.clear()
             self.ng_text_list.clear()
             self.display_images_checkbox.setChecked(self.settings["display_images"])  # 新しいチェックボックスをリセット
+            self.opaque_background_checkbox.setChecked(self.settings["opaque_background_mode"])
+            self.update_chroma_key_color_button(self.settings["chroma_key_color"])
+            self.update_opaque_background_ui()
             # ### 機能追加: UIにリセット値を反映 ###
             self.watch_mainstream_check.setChecked(self.settings["watch_mainstream_thread"])
             self.watch_delay_spin.setValue(self.settings["watch_delay"]) # ### 追加 ###

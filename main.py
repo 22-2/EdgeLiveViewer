@@ -694,7 +694,10 @@ class MainWindow(QMainWindow):
             # 分離
             docked_pos = self.write_widget.mapToGlobal(QPoint(0, 0))
             self.write_widget.setParent(None)
-            self.write_widget.setWindowFlags(Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+            flags = Qt.Window | Qt.FramelessWindowHint
+            if self.settings.get("write_window_on_top", True):
+                flags |= Qt.WindowStaysOnTopHint
+            self.write_widget.setWindowFlags(flags)
             self.write_widget.hide()
             if self.write_widget.hide_on_detach:
                 self.write_widget.set_name_mail_visible(False)
@@ -1374,7 +1377,7 @@ class MainWindow(QMainWindow):
             self.overlay_window = CommentOverlayWindow(None)
             self.overlay_window.update_settings(self.settings)
             self.overlay_window.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
-            self.overlay_window.setAttribute(Qt.WA_TranslucentBackground, True)
+            self.overlay_window.setAttribute(Qt.WA_TranslucentBackground, not self.settings.get("opaque_background_mode", False))
             overlay_x = self.settings.get("overlay_x", 100)
             overlay_y = self.settings.get("overlay_y", 100)
             overlay_width = self.settings.get("overlay_width", 600)
@@ -1568,6 +1571,7 @@ class MainWindow(QMainWindow):
             "overlay_x": 100, "overlay_y": 100, "overlay_width": 600, "overlay_height": 800,
             "hide_anchor_comments": False, "hide_url_comments": False, "spacing": 30, "ng_ids": [], "ng_names": [], "ng_texts": [],
             "auth_token": None, "tinker_token": None, "hide_name_mail_on_detach": False, "display_images": True, "hide_image_urls": True,
+            "opaque_background_mode": False, "chroma_key_color": "#00FF00",
             # ### 機能追加: 本流スレ監視設定のデフォルト値を追加 ###
             "watch_mainstream_thread": True,
             "watch_duration": 60,

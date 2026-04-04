@@ -1376,7 +1376,11 @@ class MainWindow(QMainWindow):
         if not self.overlay_window or not self.overlay_window.isVisible():
             self.overlay_window = CommentOverlayWindow(None)
             self.overlay_window.update_settings(self.settings)
-            self.overlay_window.setWindowFlags(Qt.Window | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+            # 設定に応じて常に手前フラグを付与する
+            flags = Qt.Window | Qt.FramelessWindowHint
+            if self.settings.get("overlay_on_top", True):
+                flags |= Qt.WindowStaysOnTopHint
+            self.overlay_window.setWindowFlags(flags)
             self.overlay_window.setAttribute(Qt.WA_TranslucentBackground, not self.settings.get("opaque_background_mode", False))
             overlay_x = self.settings.get("overlay_x", 100)
             overlay_y = self.settings.get("overlay_y", 100)

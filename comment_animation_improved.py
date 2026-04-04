@@ -108,7 +108,9 @@ class ImageLoaderThread(QThread):
 
 class CommentOverlayWindow(QWidget):
     def __init__(self, parent=None):
-        super().__init__(parent, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        # NOTE: WindowStaysOnTopHint を UI 設定で制御するため、ここでは常に付与しない。
+        # 理由: ユーザーが「常に手前」をオフにしたときに即時反映できるようにする。
+        super().__init__(parent, Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowOpacity(0.8)
         self.setGeometry(100, 100, 600, 800)

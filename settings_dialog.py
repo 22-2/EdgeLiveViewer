@@ -43,6 +43,7 @@ class SettingsDialog(QDialog):
             "ng_names": [],
             "ng_texts": [],
             "display_images": True,
+            "overlay_on_top": True,
             "write_window_opacity": 1.0,
             "write_window_on_top": True,
             "hide_name_mail_on_detach": False,
@@ -237,6 +238,10 @@ class SettingsDialog(QDialog):
         self.write_window_on_top_checkbox = QCheckBox("分離ウィンドウを常に手前に表示")
         self.write_window_on_top_checkbox.setChecked(self.settings.get("write_window_on_top", True))
         display_form.addRow("", self.write_window_on_top_checkbox)
+        # オーバーレイウィンドウを常に手前に表示するかの設定
+        self.overlay_on_top_checkbox = QCheckBox("オーバーレイを常に手前に表示")
+        self.overlay_on_top_checkbox.setChecked(self.settings.get("overlay_on_top", True))
+        display_form.addRow("", self.overlay_on_top_checkbox)
         
         
         self.hide_anchor_checkbox = QCheckBox("アンカー（>>）を含むコメントを表示しない")
@@ -576,6 +581,7 @@ class SettingsDialog(QDialog):
         self.settings["spacing"] = self.spacing_spin.value()
         self.settings["write_window_opacity"] = self.write_window_opacity_slider.value() / 100.0
         self.settings["write_window_on_top"] = self.write_window_on_top_checkbox.isChecked()
+        self.settings["overlay_on_top"] = self.overlay_on_top_checkbox.isChecked()
         self.settings["display_images"] = self.display_images_checkbox.isChecked()  # 確実に保存
         self.settings["hide_image_urls"] = self.hide_image_urls_checkbox.isChecked()  # 新しい設定を保存
         self.settings["opaque_background_mode"] = self.opaque_background_checkbox.isChecked()
@@ -675,6 +681,8 @@ class SettingsDialog(QDialog):
             self.update_opaque_background_ui()
             # 分離ウィンドウのオントップ設定をリセット
             self.write_window_on_top_checkbox.setChecked(self.settings.get("write_window_on_top", True))
+            # オーバーレイのオントップ設定をリセット
+            self.overlay_on_top_checkbox.setChecked(self.settings.get("overlay_on_top", True))
             # ### 機能追加: UIにリセット値を反映 ###
             self.watch_mainstream_check.setChecked(self.settings["watch_mainstream_thread"])
             self.watch_delay_spin.setValue(self.settings["watch_delay"]) # ### 追加 ###

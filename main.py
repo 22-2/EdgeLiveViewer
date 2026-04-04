@@ -10,6 +10,7 @@ import os
 import sys
 import time
 import json
+import signal
 import re
 import requests
 import logging
@@ -1633,10 +1634,33 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"エラー: {message[:50]}...")
 
 if __name__ == "__main__":
+    # インタラクティブな環境やターミナルからの Ctrl+C を確実に受け取るため、
+    # SIGINT ハンドラを設定し、アプリケーションの終了をリクエストする。
+    # また、Qt イベントループ中でも Python のシグナルハンドラが実行されやすくするため、
+    # 定期的に何もしない QTimer を回す（シグナル処理の機会を増やす）。
     app = QApplication(sys.argv)
     app.setProperty("comment_time", time.time())
-    
+
     window = MainWindow()
     window.show()
-    
+    app.setProperty("main_window", window)
+
+    def _sigint_handler(signum, frame):
+        logger.info("SIGINT 受信: シャットダウンを開始します")
+        try:
+            # ウィンドウの closeEvent が各スレッド停止処理を呼ぶようにする
+            if window is not None:
+                window.close()
+        except Exception:
+            pass
+        # イベントループ終了をキューに登録
+        QTimer.singleShot(0, app.quit)
+
+    signal.signal(signal.SIGINT, _sigint_handler)
+
+    # Qt のイベントループ中でもシグナルハンドラが呼ばれやすくするための noop タイマー
+    _sig_noop_timer = QTimer()
+    _sig_noop_timer.timeout.connect(lambda: None)
+    _sig_noop_timer.start(500)
+
     sys.exit(app.exec_())

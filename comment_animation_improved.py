@@ -1202,14 +1202,13 @@ class CommentOverlayWindow(QWidget):
         # 意図: 常時フレームを表示すると視認性が悪くなるため、操作時だけ表示する
         show_frame = (not self.is_minimized) and (self.is_hovering_window or self.dragging or self.resizing)
 
-        # フレーム非表示時でもウィンドウ全体にほぼ透過の背景を描画して
-        # OS/Qtのレイヤードウィンドウで「完全透過領域がクリック透過になる」挙動を防ぐ。
-        # 意図: 完全に透明なピクセルだけだとマウス判定が行われない環境があるため、
-        #       見た目上は透明に見える最小アルファを敷いてヒット判定を維持する。
+        # フレーム非表示時は「上部バーの領域だけ」にほぼ透過の描画を入れる。
+        # 意図: 全画面に当たり判定を持たせると中身がクリックを奪うため、
+        #       ホバー/ドラッグを受ける領域を上部バーだけに限定する。
         if not show_frame:
             painter.setBrush(QBrush(QColor(0, 0, 0, 1)))
             painter.setPen(Qt.NoPen)
-            painter.drawRect(0, 0, self.width(), self.height())
+            painter.drawRect(0, 0, self.width(), self.move_area_height)
 
         if show_frame:
             # ... (この部分は元のコードのまま) ...

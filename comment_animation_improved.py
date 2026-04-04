@@ -7,7 +7,7 @@ import logging
 import time
 import re  # ここを追加
 from PyQt5.QtWidgets import (QWidget, QApplication)
-from PyQt5.QtCore import (Qt, QTimer, QRect, QPoint, QSize, QThread, pyqtSignal, QBuffer, QByteArray)
+from PyQt5.QtCore import (Qt, QTimer, QRect, QPoint, QSize, QThread, pyqtSignal, QBuffer, QByteArray, QEvent)
 from PyQt5.QtGui import (QFont, QColor, QPainter, QFontMetrics, QPen, QBrush, QImage, QMovie, QPixmap, QCursor)
 import requests
 from io import BytesIO
@@ -479,6 +479,19 @@ class CommentOverlayWindow(QWidget):
         logger.info(f"システムメッセージ追加: {message}, 種別: {message_type}, ID: {comment_id}, row: {row}, y: {y_position}")
         self.update()
 
+    def changeEvent(self, event):
+        """ウィンドウ状態の変化を監視し、最小化/復元フラグを同期する"""
+        if event.type() == QEvent.WindowStateChange:
+            if self.windowState() & Qt.WindowMinimized:
+                logger.info("WindowStateChange: minimized (OS level)")
+                self.is_minimized = True
+            else:
+                if self.is_minimized:
+                    logger.info("WindowStateChange: restored from minimized")
+                self.is_minimized = False
+            self.update()
+        super().changeEvent(event)
+
     # ... (calculate_comment_rowsからresize_windowまでのメソッドは変更なし) ...
     def calculate_comment_rows(self):
         font = QFont(self.font_family)
@@ -589,7 +602,20 @@ class CommentOverlayWindow(QWidget):
             pos = event.pos()
             self.update_cursor(pos)
 
+            # 最小化状態では通常のクリックを無視するが、
+            # タイトルバー（move_area_height）をクリックした場合は復元する。
+            # 理由: ユーザーが最小化後に元に戻せず操作不能になる問題を防ぐため。
             if self.is_minimized:
+                if pos.y() <= self.move_area_height:
+                    logger.info("Minimized: restoring window on titlebar click")
+                    # OSレベルで最小化されている場合に備え、正しく復元する
+                    try:
+                        self.showNormal()
+                    except Exception:
+                        pass
+                    self.is_minimized = False
+                    self.update()
+                    return
                 return
 
             close_button_rect = QRect(
@@ -618,7 +644,13 @@ class CommentOverlayWindow(QWidget):
             elif maximize_button_rect.contains(pos):
                 self.toggle_maximize()
             elif minimize_button_rect.contains(pos):
-                logger.info("Minimize button clicked, hiding move area and borders")
+                logger.info("Minimize button clicked, performing OS minimize")
+                # OS レベルの最小化を行い、内部フラグも立てる
+                try:
+                    self.showMinimized()
+                except Exception:
+                    # showMinimized が利用できない環境では代替で非表示にする
+                    self.hide()
                 self.is_minimized = True
                 self.update()
             elif maximize_button_rect.contains(pos):

@@ -292,6 +292,11 @@ class CommentOverlayWindow(QWidget):
         else:
             self.current_update_interval = 1.0
 
+        # 意図: 取得→表示までの遅延を最小化するため、キューが空の状態で
+        #       新規バッチが来たら 1件目は schedule_next_comment の人為的待ち
+        #       (calculate_flow_interval で 300-500ms) を経由せず即時表示する。
+        was_queue_empty = not self.comment_queue
+
         comments_added_directly = 0
         for comment in comments:
             comment_timestamp = comment.get('timestamp')
@@ -301,18 +306,23 @@ class CommentOverlayWindow(QWidget):
             else:
                 self.comment_queue.append(comment)
                 comments_added_directly += 1
-        
+
         if self.delayed_comment_queue:
             self.delayed_comment_queue.sort(key=lambda x: x[0])
-        
+
         if comments_added_directly > 0:
             if len(self.comment_queue) > self.comment_queue_max_size:
                 excess = len(self.comment_queue) - self.comment_queue_max_size
                 self.comment_queue = self.comment_queue[excess:]
                 logger.warning(f"コメントキューが上限 {self.comment_queue_max_size} を超えたため、古いコメントを削除しました")
-            
+
             if self.flow_timer.isActive():
                 self.flow_timer.stop()
+
+            # キューが直前まで空だった場合、1件目を即時に流して残りをスケジュール
+            if was_queue_empty and self.comment_queue:
+                first_comment = self.comment_queue.pop(0)
+                self.add_comment(first_comment)
             self.schedule_next_comment()
 
     def process_delayed_comments(self):

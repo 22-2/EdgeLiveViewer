@@ -113,6 +113,10 @@ class CommentOverlayWindow(QWidget):
         super().__init__(parent, Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowOpacity(0.8)
+        # コメントや画像の設定値は、この初期サイズを基準とした論理サイズとして扱う。
+        # ウィンドウの縦横比が変わっても収まるよう、短い側の倍率で一様に拡縮する。
+        self.base_overlay_size = QSize(600, 800)
+        self.display_scale = 1.0
         self.setGeometry(100, 100, 600, 800)
 
         # デフォルト設定を初期化
@@ -235,13 +239,40 @@ class CommentOverlayWindow(QWidget):
 
         self.start_image_loader()
 
+    def _update_display_scale(self):
+        width_scale = self.width() / self.base_overlay_size.width()
+        height_scale = self.height() / self.base_overlay_size.height()
+        self.display_scale = max(0.01, min(width_scale, height_scale))
+
+    def _scaled_value(self, value, minimum=1):
+        return max(minimum, int(round(value * self.display_scale)))
+
+    def _display_font(self):
+        font = QFont(self.font_family)
+        font.setPointSize(self._scaled_value(self.font_size))
+        font.setWeight(self.font_weight)
+        return font
+
+    def _display_image_height(self):
+        return self._scaled_value(self.image_height)
+
+    def _comment_y_position(self, row, line_height):
+        if self.display_position == "top":
+            y_position = self.move_area_height + row * self.row_height + line_height
+        elif self.display_position == "bottom":
+            y_position = self.height() - row * self.row_height - line_height
+        else:
+            y_position = (self.height() - line_height) // 2 + row * self.row_height
+        return max(line_height + self.move_area_height,
+                   min(y_position, self.height() - line_height))
+
     # ★★★【新設】事前レンダリング用のヘルパーメソッド ★★★
     def _create_comment_pixmap(self, text, font, font_color, shadow_color, shadow_offset, shadow_directions):
         """テキストと影を含むQPixmapを事前に生成する"""
         font_metrics = QFontMetrics(font)
         text_width = font_metrics.width(text)
         text_height = font_metrics.height()
-        
+
         # 影の分だけPixmapのサイズを大きくする
         pixmap_width = text_width + shadow_offset * 2
         pixmap_height = text_height + shadow_offset * 2
@@ -445,21 +476,14 @@ class CommentOverlayWindow(QWidget):
         self.schedule_next_comment()
             
     def add_system_message(self, message, message_type="generic"):
-        font = QFont(self.font_family)
-        font.setPointSize(self.font_size)
-        font.setWeight(self.font_weight)
+        font = self._display_font()
         font_metrics = QFontMetrics(font)
         
         text_width = font_metrics.width(message)
         row = self.find_available_row(text_width)
         
         line_height = font_metrics.height()
-        if self.display_position == "top":
-            y_position = self.move_area_height + row * self.row_height + line_height
-        elif self.display_position == "bottom":
-            y_position = self.height() - row * self.row_height - line_height
-        
-        y_position = max(line_height + self.move_area_height, min(y_position, self.height() - line_height))
+        y_position = self._comment_y_position(row, line_height)
         
         self.comment_id_counter += 1
         comment_id = f"system_{int(time.time()*1000)}_{self.comment_id_counter}"
@@ -469,7 +493,7 @@ class CommentOverlayWindow(QWidget):
         # Pixmapを生成
         comment_pixmap = self._create_comment_pixmap(
             message, font, self.font_color, self.font_shadow_color,
-            self.font_shadow, self.font_shadow_directions
+            self._scaled_value(self.font_shadow, 0), self.font_shadow_directions
         )
         
         comment_obj = CommentObject(
@@ -506,13 +530,11 @@ class CommentOverlayWindow(QWidget):
 
     # ... (calculate_comment_rowsからresize_windowまでのメソッドは変更なし) ...
     def calculate_comment_rows(self):
-        font = QFont(self.font_family)
-        font.setPointSize(self.font_size)
-        font.setWeight(self.font_weight)
+        font = self._display_font()
         font_metrics = QFontMetrics(font)
         
         line_height = font_metrics.height()
-        self.row_height = line_height + self.spacing
+        self.row_height = line_height + self._scaled_value(self.spacing, 0)
         
         available_height = self.height() - self.move_area_height - line_height
         
@@ -523,7 +545,58 @@ class CommentOverlayWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        old_size = event.oldSize()
+        self._update_display_scale()
         self.calculate_comment_rows()
+        if old_size.isValid() and old_size.width() > 0 and old_size.height() > 0:
+            self._rescale_flowing_objects(old_size)
+
+    def _rescale_flowing_objects(self, old_size):
+        """表示中のコメント・画像を、新しいオーバーレイ倍率へ追従させる。"""
+        font = self._display_font()
+        font_metrics = QFontMetrics(font)
+        line_height = font_metrics.height()
+        shadow = self._scaled_value(self.font_shadow, 0)
+        old_width = old_size.width()
+        new_width = self.width()
+
+        self.row_usage.clear()
+        for comment in self.comments:
+            old_object_width = max(1, comment.width)
+            progress = (old_width - comment.x) / max(1, old_width + old_object_width)
+
+            comment.pixmap = self._create_comment_pixmap(
+                comment.text, font, self.font_color, self.font_shadow_color,
+                shadow, self.font_shadow_directions
+            )
+            comment.width = font_metrics.width(comment.text)
+            comment.height = line_height
+            comment.row = comment.row % self.max_rows
+            comment.x = new_width - progress * (new_width + comment.width)
+            comment.y = self._comment_y_position(comment.row, line_height)
+            comment.speed = (new_width + comment.width) / self.comment_speed
+
+            current = self.row_usage.get(comment.row)
+            if current is None or comment.x > current.x:
+                self.row_usage[comment.row] = comment
+
+        image_height = self._display_image_height()
+        bottom_margin = self._scaled_value(10)
+        for image_id, pos in self.image_positions.items():
+            old_object_width = max(1, pos['width'])
+            progress = (old_width - pos['x']) / max(1, old_width + old_object_width)
+            aspect_ratio = pos['width'] / max(1, pos['height'])
+            pos['height'] = image_height
+            pos['width'] = max(1, int(round(image_height * aspect_ratio)))
+            pos['x'] = new_width - progress * (new_width + pos['width'])
+            pos['y'] = self.height() - image_height - bottom_margin
+            pos['speed'] = (new_width + pos['width']) / self.comment_speed
+
+            movie = self.movies.get(image_id)
+            if movie:
+                movie.setScaledSize(QSize(pos['width'], pos['height']))
+
+        self.update()
 
     def update_cursor(self, pos):
         if self.is_minimized:
@@ -848,7 +921,7 @@ class CommentOverlayWindow(QWidget):
         current_speed = existing_comment.speed
         gap = self.width() - right_edge
 
-        if gap < 120:
+        if gap < self._scaled_value(120):
             return False
 
         if speed_new > current_speed:
@@ -958,9 +1031,10 @@ class CommentOverlayWindow(QWidget):
                              logger.error(f"GIFの画像データが無効: {url}")
                              return
 
+                        image_height = self._display_image_height()
                         movie.setScaledSize(QSize(
-                            int(self.image_height * (temp_image.width() / temp_image.height())),
-                            self.image_height
+                            int(image_height * (temp_image.width() / temp_image.height())),
+                            image_height
                         ))
                         
                         if not movie.isValid():
@@ -976,10 +1050,9 @@ class CommentOverlayWindow(QWidget):
                 else:
                     image = QImage()
                     if image.loadFromData(content_bytes):
-                        scaled_width = int(self.image_height * (image.width() / image.height()))
-                        scaled_image = image.scaled(scaled_width, self.image_height, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                         image_id = f"img_{int(time.time()*1000)}_{len(self.images)}"
-                        self.image_queue.append((image_id, scaled_image, comment_id))
+                        # 元画像を保持し、描画時に現在のオーバーレイ倍率へ合わせる。
+                        self.image_queue.append((image_id, image, comment_id))
                         logger.info(f"画像をキューに追加: ID={image_id}, URL={url}")
                     else:
                         logger.error(f"静止画データの読み込みに失敗: URL={url}")
@@ -993,6 +1066,7 @@ class CommentOverlayWindow(QWidget):
             return
 
         window_width = self.width()
+        image_height = self._display_image_height()
         logger.debug(f"画像キュー処理開始: キューサイズ={len(self.image_queue)}, ウィンドウ幅={window_width}")
 
         processed_ids = set()
@@ -1007,14 +1081,17 @@ class CommentOverlayWindow(QWidget):
             if image:
                 logger.debug(f"画像処理開始: ID={image_id}, comment_id={comment_id}, タイプ={type(image)}")
                 if isinstance(image, QMovie):
-                    scaled_width = image.scaledSize().width()
+                    current_size = image.scaledSize()
+                    aspect_ratio = current_size.width() / max(1, current_size.height())
+                    scaled_width = max(1, int(round(image_height * aspect_ratio)))
+                    image.setScaledSize(QSize(scaled_width, image_height))
                     self.movies[image_id] = image
                 else:
-                    scaled_width = int(self.image_height * (image.width() / image.height()))
+                    scaled_width = max(1, int(round(image_height * (image.width() / image.height()))))
                     self.images[image_id] = image
 
                 start_x = window_width
-                min_gap = 60
+                min_gap = self._scaled_value(60)
 
                 prev_images = [pos for img_id, pos in self.image_positions.items() if pos.get('comment_id') == comment_id]
                 if prev_images:
@@ -1031,9 +1108,9 @@ class CommentOverlayWindow(QWidget):
 
                 self.image_positions[image_id] = {
                     'x': start_x,
-                    'y': self.height() - self.image_height - 10,
+                    'y': self.height() - image_height - self._scaled_value(10),
                     'width': scaled_width,
-                    'height': self.image_height,
+                    'height': image_height,
                     'speed': (window_width + scaled_width) / self.comment_speed,
                     'comment_id': comment_id
                 }
@@ -1138,28 +1215,19 @@ class CommentOverlayWindow(QWidget):
         if len(self.comments) >= self.max_comments:
             self.remove_oldest_comment()
         
-        font = QFont(self.font_family)
-        font.setPointSize(self.font_size)
-        font.setWeight(self.font_weight)
+        font = self._display_font()
         font_metrics = QFontMetrics(font)
         
         text_width = font_metrics.width(display_text)
         row = self.find_available_row(text_width)
         
         line_height = font_metrics.height()
-        if self.display_position == "top":
-            y_position = self.move_area_height + row * self.row_height + line_height
-        elif self.display_position == "bottom":
-            y_position = self.height() - row * self.row_height - line_height
-        else:
-            y_position = (self.height() - line_height) // 2 + row * self.row_height
-        
-        y_position = max(line_height + self.move_area_height, min(y_position, self.height() - line_height))
+        y_position = self._comment_y_position(row, line_height)
         
         # Pixmapを生成
         comment_pixmap = self._create_comment_pixmap(
             display_text, font, self.font_color, self.font_shadow_color,
-            self.font_shadow, self.font_shadow_directions
+            self._scaled_value(self.font_shadow, 0), self.font_shadow_directions
         )
         
         self.comment_id_counter += 1
@@ -1217,14 +1285,7 @@ class CommentOverlayWindow(QWidget):
         self.setAttribute(Qt.WA_TranslucentBackground, not self.opaque_background_mode)
         
         self.calculate_comment_rows()
-        for comment in self.comments:
-            # ★★★ 変更点: ['key'] を .key に修正 ★★★
-            total_distance = self.width() + comment.width
-            comment.speed = total_distance / self.comment_speed
-        
-        for image_id, pos in self.image_positions.items():
-            total_distance = self.width() + pos['width']
-            pos['speed'] = total_distance / self.comment_speed
+        self._rescale_flowing_objects(self.size())
         
         logger.debug(f"update_settings 実行後 - display_images: {self.settings.get('display_images', True)}, hide_image_urls: {self.settings.get('hide_image_urls', True)}")
         self.update()
@@ -1252,7 +1313,7 @@ class CommentOverlayWindow(QWidget):
             painter.drawRect(self.rect())
 
         # フォントメトリクスは枠線描画用に一度だけ取得
-        font = QFont(self.font_family, self.font_size, self.font_weight)
+        font = self._display_font()
         font_metrics = QFontMetrics(font)
 
         # --- ウィンドウのコントロールUI描画（ホバー/ドラッグ時のみ） ---
@@ -1319,16 +1380,21 @@ class CommentOverlayWindow(QWidget):
             if image_id in self.image_positions:
                 pos = self.image_positions[image_id]
                 if not image.isNull():
-                    painter.drawImage(int(pos['x']), int(pos['y']), image)
+                    target = QRect(int(pos['x']), int(pos['y']), pos['width'], pos['height'])
+                    painter.drawImage(target, image)
         for image_id, movie in self.movies.items():
             if image_id in self.image_positions:
                 pos = self.image_positions[image_id]
                 if movie.isValid():
                     current_image = movie.currentImage()
                     if not current_image.isNull():
-                        painter.drawImage(int(pos['x']), int(pos['y']), current_image)
+                        target = QRect(int(pos['x']), int(pos['y']), pos['width'], pos['height'])
+                        painter.drawImage(target, current_image)
 
         # --- コメントの描画 (Pixmapベースに書き換え) ---
+        highlight_padding = self._scaled_value(5)
+        highlight_size_extra = highlight_padding * 2
+        highlight_pen_width = self._scaled_value(3)
         for comment in self.comments:
             # ★★★ 変更点: getattrを使用し、より安全に属性にアクセス ★★★
             pixmap = getattr(comment, 'pixmap', None)
@@ -1353,21 +1419,27 @@ class CommentOverlayWindow(QWidget):
             if is_system:
                 painter.setBrush(QBrush(QColor(255, 255, 0, 70)))
                 painter.setPen(Qt.NoPen)
-                painter.drawRect(int(comment.x) - 5, int(comment.y) - font_metrics.ascent() - 5,
-                                comment.width + 10, comment.height + 10)
+                painter.drawRect(int(comment.x) - highlight_padding,
+                                int(comment.y) - font_metrics.ascent() - highlight_padding,
+                                comment.width + highlight_size_extra,
+                                comment.height + highlight_size_extra)
             elif is_my_comment:
                 painter.setBrush(Qt.NoBrush)
-                painter.setPen(QPen(QColor(255, 255, 0, 255), 3))
-                painter.drawRect(int(comment.x) - 5, int(comment.y) - font_metrics.ascent() - 5,
-                                comment.width + 10, comment.height + 10)
+                painter.setPen(QPen(QColor(255, 255, 0, 255), highlight_pen_width))
+                painter.drawRect(int(comment.x) - highlight_padding,
+                                int(comment.y) - font_metrics.ascent() - highlight_padding,
+                                comment.width + highlight_size_extra,
+                                comment.height + highlight_size_extra)
             elif is_anchored_to_my_comment:
                 painter.setBrush(Qt.NoBrush)
-                painter.setPen(QPen(QColor(255, 0, 0, 255), 3))
-                painter.drawRect(int(comment.x) - 5, int(comment.y) - font_metrics.ascent() - 5,
-                                comment.width + 10, comment.height + 10)
+                painter.setPen(QPen(QColor(255, 0, 0, 255), highlight_pen_width))
+                painter.drawRect(int(comment.x) - highlight_padding,
+                                int(comment.y) - font_metrics.ascent() - highlight_padding,
+                                comment.width + highlight_size_extra,
+                                comment.height + highlight_size_extra)
             
             # Pixmapを描画 (★★★ 変更点 ★★★)
-            draw_y = comment.y - font_metrics.ascent() - self.font_shadow
+            draw_y = comment.y - font_metrics.ascent() - self._scaled_value(self.font_shadow, 0)
             painter.drawPixmap(int(comment.x), int(draw_y), pixmap)
             
 if __name__ == "__main__":

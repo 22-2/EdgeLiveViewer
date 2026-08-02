@@ -766,6 +766,7 @@ class CommentOverlayWindow(QWidget):
                 self.resizing = True
                 self.drag_position = event.globalPos()
                 logger.info(f"Resize started: mode={self.resize_mode}")
+                self.update()
     
     def toggle_maximize(self):
         """ウィンドウの最大化/元のサイズへの切り替え"""
@@ -1446,6 +1447,35 @@ class CommentOverlayWindow(QWidget):
             inset = self._comment_pixmap_inset(shadow)
             draw_y = comment.y - font_metrics.ascent() - inset
             painter.drawPixmap(int(comment.x) - inset, int(draw_y), pixmap)
+
+        # リサイズ中はOBS側のキャンバス寸法を合わせやすいよう、
+        # 現在のクライアント領域サイズを最前面に表示する。
+        if self.resizing:
+            painter.save()
+            size_text = f"{self.width()} × {self.height()}"
+            size_font = QFont(self.font_family)
+            size_font.setPixelSize(18)
+            size_font.setWeight(QFont.Bold)
+            painter.setFont(size_font)
+
+            size_metrics = QFontMetrics(size_font)
+            horizontal_padding = 18
+            vertical_padding = 10
+            badge_width = size_metrics.horizontalAdvance(size_text) + horizontal_padding * 2
+            badge_height = size_metrics.height() + vertical_padding * 2
+            badge_rect = QRect(
+                (self.width() - badge_width) // 2,
+                (self.height() - badge_height) // 2,
+                badge_width,
+                badge_height
+            )
+
+            painter.setPen(QPen(QColor(255, 255, 255, 230), 1))
+            painter.setBrush(QBrush(QColor(0, 0, 0, 190)))
+            painter.drawRoundedRect(badge_rect, 8, 8)
+            painter.setPen(QColor(255, 255, 255))
+            painter.drawText(badge_rect, Qt.AlignCenter, size_text)
+            painter.restore()
             
 if __name__ == "__main__":
     import time

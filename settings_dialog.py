@@ -56,7 +56,10 @@ class SettingsDialog(QDialog):
             "momentum_ratio": 1.5
         }
         
-        self.load_settings()
+        # 親ウィンドウがある場合は、すでに読み込まれている共通設定を唯一の情報源にする。
+        # ダイアログ側で再読込すると、未保存の変更や追加設定を上書きする可能性がある。
+        if parent is None:
+            self.load_settings()
         self.init_ui()
     
     def init_ui(self):
@@ -606,11 +609,16 @@ class SettingsDialog(QDialog):
         self.settings["font_shadow_directions"] = shadow_directions
 
         try:
-            settings_dir = os.path.expanduser("~/.edge_live_viewer")
-            os.makedirs(settings_dir, exist_ok=True)
-            settings_file = os.path.join(settings_dir, "settings.json")
-            with open(settings_file, "w", encoding="utf-8") as f:
-                json.dump(self.settings, f, indent=4)
+            parent = self.parent()
+            if parent is not None and hasattr(parent, "save_settings"):
+                # メインウィンドウの保存経路に集約し、全設定を同一ファイルへ保存する。
+                parent.save_settings()
+            else:
+                settings_dir = os.path.expanduser("~/.edge_live_viewer")
+                os.makedirs(settings_dir, exist_ok=True)
+                settings_file = os.path.join(settings_dir, "settings.json")
+                with open(settings_file, "w", encoding="utf-8") as f:
+                    json.dump(self.settings, f, indent=4)
             QMessageBox.information(self, "設定保存", "設定を保存しました。")
             self.accept()
         except Exception as e:

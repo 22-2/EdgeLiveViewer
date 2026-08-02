@@ -849,8 +849,10 @@ class MainWindow(QMainWindow):
         dialog.tab_widget.setCurrentIndex(2)
         if dialog.exec_():
             self.settings = dialog.get_settings()
+            self.save_settings()
             if self.overlay_window:
                 self.overlay_window.update_settings(self.settings)
+            self.apply_overlay_window_on_top_setting()
             logger.info("設定を更新しました")
             print("現在の self.settings:", self.settings)
     
@@ -1550,9 +1552,11 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self)
         if dialog.exec_():
             self.settings = dialog.get_settings()
+            self.save_settings()
             
             if self.overlay_window is not None:
                 self.overlay_window.update_settings(self.settings)
+            self.apply_overlay_window_on_top_setting()
             
             if self.comment_fetcher is not None:
                 self.comment_fetcher.update_interval = self.settings["update_interval"]
@@ -1565,6 +1569,23 @@ class MainWindow(QMainWindow):
             
             logger.info("設定を更新しました")
             print("現在の self.settings:", self.settings)
+
+    def apply_overlay_window_on_top_setting(self):
+        """設定変更を既に開いているオーバーレイへ即時反映する。"""
+        if self.overlay_window is None:
+            return
+
+        flags = self.overlay_window.windowFlags()
+        if self.settings.get("overlay_on_top", True):
+            flags |= Qt.WindowStaysOnTopHint
+        else:
+            flags &= ~Qt.WindowStaysOnTopHint
+
+        if flags != self.overlay_window.windowFlags():
+            self.overlay_window.setWindowFlags(flags)
+            # setWindowFlags は表示中ウィンドウを非表示にするため、表示状態を戻す。
+            if self.overlay_window.isVisible():
+                self.overlay_window.show()
     
     def load_settings(self):
         default_settings = {
@@ -1573,8 +1594,13 @@ class MainWindow(QMainWindow):
             "comment_delay": 0, "display_position": "top", "max_comments": 80, "window_opacity": 0.8, "update_interval": 5,
             "playback_speed": 1.0, "auto_next_thread": True, "next_thread_search_duration": 180, "first_launch": True,
             "overlay_x": 100, "overlay_y": 100, "overlay_width": 600, "overlay_height": 800,
+            "overlay_is_maximized": False,
+            "overlay_normal_x": 100, "overlay_normal_y": 100,
+            "overlay_normal_width": 600, "overlay_normal_height": 800,
+            "overlay_on_top": True,
             "hide_anchor_comments": False, "hide_url_comments": False, "spacing": 30, "ng_ids": [], "ng_names": [], "ng_texts": [],
             "auth_token": None, "tinker_token": None, "hide_name_mail_on_detach": False, "display_images": True, "hide_image_urls": True,
+            "write_window_opacity": 1.0, "write_window_on_top": True,
             "opaque_background_mode": False, "chroma_key_color": "#00FF00",
             # ### 機能追加: 本流スレ監視設定のデフォルト値を追加 ###
             "watch_mainstream_thread": True,
@@ -1588,9 +1614,9 @@ class MainWindow(QMainWindow):
             if os.path.exists(settings_file):
                 with open(settings_file, "r", encoding="utf-8") as f:
                     loaded_settings = json.load(f)
-                for key, value in loaded_settings.items():
-                    if key in default_settings:
-                        default_settings[key] = value
+                # 設定画面・ウィンドウ状態を含むすべての設定を共通で復元する。
+                # キーを限定すると、後から追加した設定が再起動時に失われてしまう。
+                default_settings.update(loaded_settings)
         except Exception as e:
             logger.error(f"設定の読み込みに失敗しました: {str(e)}")
         return default_settings

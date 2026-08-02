@@ -256,6 +256,11 @@ class CommentOverlayWindow(QWidget):
     def _display_image_height(self):
         return self._scaled_value(self.image_height)
 
+    def _comment_pixmap_inset(self, shadow_offset):
+        # OBSなどが透過ウィンドウを取り込む際、境界上のアンチエイリアスが
+        # 欠けないように影の幅とは別に安全余白を確保する。
+        return shadow_offset + 2
+
     def _comment_y_position(self, row, line_height):
         if self.display_position == "top":
             y_position = self.move_area_height + row * self.row_height + line_height
@@ -273,9 +278,10 @@ class CommentOverlayWindow(QWidget):
         text_width = font_metrics.width(text)
         text_height = font_metrics.height()
 
-        # 影の分だけPixmapのサイズを大きくする
-        pixmap_width = text_width + shadow_offset * 2
-        pixmap_height = text_height + shadow_offset * 2
+        # 影とアンチエイリアスの安全余白を四辺に確保する。
+        inset = self._comment_pixmap_inset(shadow_offset)
+        pixmap_width = text_width + inset * 2
+        pixmap_height = text_height + inset * 2
         
         pixmap = QPixmap(pixmap_width, pixmap_height)
         pixmap.fill(Qt.transparent)  # 透明な背景で初期化
@@ -289,17 +295,14 @@ class CommentOverlayWindow(QWidget):
         if shadow_offset > 0:
             painter.setPen(shadow_color)
             for direction in shadow_directions:
-                px, py = 0, 0
-                if "left" in direction: px = 0
-                else: px = shadow_offset * 2
-                if "top" in direction: py = 0
-                else: py = shadow_offset * 2
-                
-                painter.drawText(px, py + font_metrics.ascent(), text)
+                dx = -shadow_offset if "left" in direction else shadow_offset
+                dy = -shadow_offset if "top" in direction else shadow_offset
+                painter.drawText(inset + dx,
+                                 inset + dy + font_metrics.ascent(), text)
 
         # 最後に本体のテキストを描画
         painter.setPen(font_color)
-        painter.drawText(shadow_offset, shadow_offset + font_metrics.ascent(), text)
+        painter.drawText(inset, inset + font_metrics.ascent(), text)
         
         painter.end()
         return pixmap
@@ -1151,7 +1154,7 @@ class CommentOverlayWindow(QWidget):
             
             elapsed = current_time - comment.creation_time
             comment.x -= comment.speed * (8 / 1000.0)
-            if comment.x < -comment.pixmap.width():
+            if comment.x < -comment.width:
                 to_remove.append(comment.id)
         
         for comment_id in to_remove:
@@ -1398,7 +1401,7 @@ class CommentOverlayWindow(QWidget):
         for comment in self.comments:
             # ★★★ 変更点: getattrを使用し、より安全に属性にアクセス ★★★
             pixmap = getattr(comment, 'pixmap', None)
-            if not pixmap or comment.x + pixmap.width() < 0 or comment.x > self.width():
+            if not pixmap or comment.x + comment.width < 0 or comment.x > self.width():
                 continue
 
             # 枠線や背景の描画ロジックは維持
@@ -1439,8 +1442,10 @@ class CommentOverlayWindow(QWidget):
                                 comment.height + highlight_size_extra)
             
             # Pixmapを描画 (★★★ 変更点 ★★★)
-            draw_y = comment.y - font_metrics.ascent() - self._scaled_value(self.font_shadow, 0)
-            painter.drawPixmap(int(comment.x), int(draw_y), pixmap)
+            shadow = self._scaled_value(self.font_shadow, 0)
+            inset = self._comment_pixmap_inset(shadow)
+            draw_y = comment.y - font_metrics.ascent() - inset
+            painter.drawPixmap(int(comment.x) - inset, int(draw_y), pixmap)
             
 if __name__ == "__main__":
     import time

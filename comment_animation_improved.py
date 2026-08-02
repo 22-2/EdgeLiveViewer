@@ -141,7 +141,8 @@ class CommentOverlayWindow(QWidget):
             "display_images": True,
             "hide_image_urls": True,
             "opaque_background_mode": False,
-            "chroma_key_color": "#00FF00"
+            "chroma_key_color": "#00FF00",
+            "lock_overlay_aspect_ratio": True
         }
 
         self.comments = []
@@ -160,6 +161,7 @@ class CommentOverlayWindow(QWidget):
         self.hide_anchor_comments = False
         self.hide_url_comments = False
         self.spacing = 30
+        self.lock_overlay_aspect_ratio = True
         self.comment_queue = []
         self.comment_queue_max_size = 100
 
@@ -908,8 +910,38 @@ class CommentOverlayWindow(QWidget):
         elif "bottom" in self.resize_mode:
             new_height += delta.y()
 
-        new_width = max(self.minimum_size.width(), new_width)
-        new_height = max(self.minimum_size.height(), new_height)
+        if self.lock_overlay_aspect_ratio:
+            aspect_ratio = 16 / 9
+            minimum_width = max(self.minimum_size.width(), int(round(self.minimum_size.height() * aspect_ratio)))
+            minimum_height = max(self.minimum_size.height(), int(round(self.minimum_size.width() / aspect_ratio)))
+            has_horizontal_handle = "left" in self.resize_mode or "right" in self.resize_mode
+            has_vertical_handle = "top" in self.resize_mode or "bottom" in self.resize_mode
+
+            # 四隅の操作では、より大きく動かした軸を基準にする。
+            use_width = has_horizontal_handle and (
+                not has_vertical_handle or abs(delta.x()) >= abs(delta.y()) * aspect_ratio
+            )
+            if use_width:
+                new_width = max(minimum_width, new_width)
+                new_height = max(minimum_height, int(round(new_width / aspect_ratio)))
+                if "left" in self.resize_mode:
+                    new_x = geo.x() + geo.width() - new_width
+                if "top" in self.resize_mode:
+                    new_y = geo.y() + geo.height() - new_height
+                elif not has_vertical_handle:
+                    new_y = geo.y() + (geo.height() - new_height) // 2
+            else:
+                new_height = max(minimum_height, new_height)
+                new_width = max(minimum_width, int(round(new_height * aspect_ratio)))
+                if "top" in self.resize_mode:
+                    new_y = geo.y() + geo.height() - new_height
+                if "left" in self.resize_mode:
+                    new_x = geo.x() + geo.width() - new_width
+                elif not has_horizontal_handle:
+                    new_x = geo.x() + (geo.width() - new_width) // 2
+        else:
+            new_width = max(self.minimum_size.width(), new_width)
+            new_height = max(self.minimum_size.height(), new_height)
 
         self.setGeometry(new_x, new_y, new_width, new_height)
         self.drag_position = global_pos
@@ -1280,6 +1312,7 @@ class CommentOverlayWindow(QWidget):
         self.current_update_interval = self.settings.get("update_interval", 1.0)
 
         self.comment_delay = self.settings.get("comment_delay", 0)
+        self.lock_overlay_aspect_ratio = self.settings.get("lock_overlay_aspect_ratio", True)
         self.opaque_background_mode = self.settings.get("opaque_background_mode", False)
         self.chroma_key_color = QColor(self.settings.get("chroma_key_color", "#00FF00"))
         

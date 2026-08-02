@@ -1598,6 +1598,7 @@ class MainWindow(QMainWindow):
             "overlay_normal_x": 100, "overlay_normal_y": 100,
             "overlay_normal_width": 600, "overlay_normal_height": 800,
             "overlay_on_top": True,
+            "lock_overlay_aspect_ratio": True,
             "hide_anchor_comments": False, "hide_url_comments": False, "spacing": 30, "ng_ids": [], "ng_names": [], "ng_texts": [],
             "auth_token": None, "tinker_token": None, "hide_name_mail_on_detach": False, "display_images": True, "hide_image_urls": True,
             "write_window_opacity": 1.0, "write_window_on_top": True,

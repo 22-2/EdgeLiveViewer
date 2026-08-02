@@ -44,6 +44,7 @@ class SettingsDialog(QDialog):
             "ng_texts": [],
             "display_images": True,
             "overlay_on_top": True,
+            "lock_overlay_aspect_ratio": True,
             "write_window_opacity": 1.0,
             "write_window_on_top": True,
             "hide_name_mail_on_detach": False,
@@ -245,6 +246,12 @@ class SettingsDialog(QDialog):
         self.overlay_on_top_checkbox = QCheckBox("オーバーレイを常に手前に表示")
         self.overlay_on_top_checkbox.setChecked(self.settings.get("overlay_on_top", True))
         display_form.addRow("", self.overlay_on_top_checkbox)
+
+        self.lock_overlay_aspect_ratio_checkbox = QCheckBox("オーバーレイを16:9に固定する")
+        self.lock_overlay_aspect_ratio_checkbox.setChecked(
+            self.settings.get("lock_overlay_aspect_ratio", True)
+        )
+        display_form.addRow("", self.lock_overlay_aspect_ratio_checkbox)
         
         
         self.hide_anchor_checkbox = QCheckBox("アンカー（>>）を含むコメントを表示しない")
@@ -585,6 +592,7 @@ class SettingsDialog(QDialog):
         self.settings["write_window_opacity"] = self.write_window_opacity_slider.value() / 100.0
         self.settings["write_window_on_top"] = self.write_window_on_top_checkbox.isChecked()
         self.settings["overlay_on_top"] = self.overlay_on_top_checkbox.isChecked()
+        self.settings["lock_overlay_aspect_ratio"] = self.lock_overlay_aspect_ratio_checkbox.isChecked()
         self.settings["display_images"] = self.display_images_checkbox.isChecked()  # 確実に保存
         self.settings["hide_image_urls"] = self.hide_image_urls_checkbox.isChecked()  # 新しい設定を保存
         self.settings["opaque_background_mode"] = self.opaque_background_checkbox.isChecked()
@@ -612,6 +620,7 @@ class SettingsDialog(QDialog):
             parent = self.parent()
             if parent is not None and hasattr(parent, "save_settings"):
                 # メインウィンドウの保存経路に集約し、全設定を同一ファイルへ保存する。
+                parent.settings = self.settings
                 parent.save_settings()
             else:
                 settings_dir = os.path.expanduser("~/.edge_live_viewer")
@@ -646,6 +655,7 @@ class SettingsDialog(QDialog):
                 "playback_speed": 1.0, "auto_next_thread": True, "next_thread_search_duration": 180,
                 "hide_anchor_comments": False, "hide_url_comments": False, "spacing": 30,
                 "ng_ids": [], "ng_names": [], "ng_texts": [], "display_images": True,
+                "lock_overlay_aspect_ratio": True,
                 "opaque_background_mode": False, "chroma_key_color": "#00FF00",
                 # ### 機能追加: 本流スレ監視設定をリセット ###
                 "watch_mainstream_thread": True, "watch_duration": 60, "watch_delay": 15, "momentum_ratio": 1.5
@@ -691,6 +701,9 @@ class SettingsDialog(QDialog):
             self.write_window_on_top_checkbox.setChecked(self.settings.get("write_window_on_top", True))
             # オーバーレイのオントップ設定をリセット
             self.overlay_on_top_checkbox.setChecked(self.settings.get("overlay_on_top", True))
+            self.lock_overlay_aspect_ratio_checkbox.setChecked(
+                self.settings.get("lock_overlay_aspect_ratio", True)
+            )
             # ### 機能追加: UIにリセット値を反映 ###
             self.watch_mainstream_check.setChecked(self.settings["watch_mainstream_thread"])
             self.watch_delay_spin.setValue(self.settings["watch_delay"]) # ### 追加 ###

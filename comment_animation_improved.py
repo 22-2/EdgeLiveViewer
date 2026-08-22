@@ -1272,7 +1272,6 @@ class CommentOverlayWindow(QWidget):
         self.update()
 
     def update_settings(self, settings):
-        # (このメソッドは変更なし)
         self.settings = settings.copy()
         self.font_size = self.settings.get("font_size", self.font_size)
         self.font_weight = self.settings.get("font_weight", self.font_weight)
@@ -1299,8 +1298,22 @@ class CommentOverlayWindow(QWidget):
         
         opacity = self.settings.get("window_opacity", 0.8)
         # 意図: クロマキー向け単色背景では半透明合成を避け、色抜きしやすい不透明表示に固定する。
-        self.setWindowOpacity(1.0 if self.opaque_background_mode else opacity)
-        self.setAttribute(Qt.WA_TranslucentBackground, not self.opaque_background_mode)
+        target_opacity = 1.0 if self.opaque_background_mode else opacity
+        if abs(self.windowOpacity() - target_opacity) > 0.001:
+            self.setWindowOpacity(target_opacity)
+
+        target_translucent = not self.opaque_background_mode
+        if self.testAttribute(Qt.WA_TranslucentBackground) != target_translucent:
+            # WindowsのLayered Windowは表示中に透明属性を切り替えると、
+            # UpdateLayeredWindowIndirectへ不整合なサイズ/描画領域が渡されることがある。
+            # 属性が実際に変わる場合だけ一度隠してから切り替え、通常の設定変更では
+            # 半透明ウィンドウのネイティブ再構成を発生させない。
+            was_visible = self.isVisible()
+            if was_visible:
+                self.hide()
+            self.setAttribute(Qt.WA_TranslucentBackground, target_translucent)
+            if was_visible:
+                self.show()
         
         self.calculate_comment_rows()
         self._rescale_flowing_objects(self.size())

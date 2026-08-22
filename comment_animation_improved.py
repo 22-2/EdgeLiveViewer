@@ -732,7 +732,7 @@ class CommentOverlayWindow(QWidget):
                 logger.info("Close button clicked, closing window")
                 self.close()
             elif maximize_button_rect.contains(pos):
-                self.toggle_maximize()
+                self.toggle_maximize(event.globalPos())
             elif minimize_button_rect.contains(pos):
                 logger.info("Minimize button clicked, performing OS minimize")
                 # OS レベルの最小化を行い、内部フラグも立てる
@@ -742,23 +742,6 @@ class CommentOverlayWindow(QWidget):
                     # showMinimized が利用できない環境では代替で非表示にする
                     self.hide()
                 self.is_minimized = True
-                self.update()
-            elif maximize_button_rect.contains(pos):
-                logger.info("Maximize button clicked")
-                if self.is_maximized:
-                    # 通常サイズに戻す
-                    if self.normal_geometry:
-                        self.setGeometry(self.normal_geometry)
-                    self.is_maximized = False
-                    logger.info("Window restored to normal size")
-                else:
-                    # 最大化する前に現在のジオメトリを保存
-                    self.normal_geometry = self.geometry()
-                    # 利用可能な画面サイズを取得
-                    screen = QApplication.desktop().availableGeometry(self)
-                    self.setGeometry(screen)
-                    self.is_maximized = True
-                    logger.info(f"Window maximized to {screen}")
                 self.update()
             elif pos.y() <= self.move_area_height and self.resize_mode is None:
                 self.dragging = True
@@ -770,7 +753,20 @@ class CommentOverlayWindow(QWidget):
                 logger.info(f"Resize started: mode={self.resize_mode}")
                 self.update()
     
-    def toggle_maximize(self):
+    def _screen_geometry_for_position(self, global_pos=None):
+        """操作位置が属するディスプレイの、タスクバーを含む画面領域を返す。"""
+        desktop = QApplication.desktop()
+        if global_pos is None:
+            global_pos = self.mapToGlobal(self.rect().center())
+
+        # ウィンドウの中心ではなくクリック位置を使う意図: 複数ディスプレイ間に
+        # またがっているウィンドウでも、ユーザーが操作した画面で最大化するため。
+        screen_number = desktop.screenNumber(global_pos)
+        if screen_number < 0:
+            screen_number = desktop.screenNumber(self)
+        return desktop.screenGeometry(screen_number)
+
+    def toggle_maximize(self, global_pos=None):
         """ウィンドウの最大化/元のサイズへの切り替え"""
         if self.is_maximized:
             # 元のサイズに戻す
@@ -781,16 +777,12 @@ class CommentOverlayWindow(QWidget):
         else:
             # 現在のジオメトリを保存
             self._normal_geometry = self.geometry()
-            
-            # 現在のモニターでウィンドウを最大化（タスクバーを含む画面全体）
-            from PyQt5.QtWidgets import QDesktopWidget
-            desktop = QDesktopWidget()
-            screen_number = desktop.screenNumber(self)
-            screen_geometry = desktop.screenGeometry(screen_number)  # タスクバーを含む画面全体
-            
+
+            # クリックされた位置のモニターで最大化する。
+            screen_geometry = self._screen_geometry_for_position(global_pos)
             self.setGeometry(screen_geometry)
             self.is_maximized = True
-            logger.info(f"Maximized window on screen {screen_number}: {screen_geometry}")
+            logger.info(f"Maximized window on the operation screen: {screen_geometry}")
         
         # 状態を即時保存
         app = QApplication.instance()
@@ -814,20 +806,9 @@ class CommentOverlayWindow(QWidget):
                 button_area_start = self.width() - self.close_button_size - self.maximize_button_size - self.minimize_button_size - self.button_margin * 5
                 if pos.x() < button_area_start:
                     if self.is_maximized:
-                        # 通常サイズに戻す
-                        if self.normal_geometry:
-                            self.setGeometry(self.normal_geometry)
-                        self.is_maximized = False
-                        logger.info("Window restored to normal size via double-click")
+                        self.toggle_maximize(event.globalPos())
                     else:
-                        # 最大化する前に現在のジオメトリを保存
-                        self.normal_geometry = self.geometry()
-                        # 利用可能な画面サイズを取得
-                        screen = QApplication.desktop().availableGeometry(self)
-                        self.setGeometry(screen)
-                        self.is_maximized = True
-                        logger.info(f"Window maximized to {screen} via double-click")
-                    self.update()
+                        self.toggle_maximize(event.globalPos())
 
     def mouseMoveEvent(self, event):
         pos = event.pos()
